@@ -4,9 +4,9 @@
   <img alt="claude-swarm — cost-tiered multi-agent delegation for Claude Code" src="img/header-light.png">
 </picture>
 
-A **Fable or Opus master** orchestrates; a **swarm of cheaper, specialized agents**
+A **Fable 5 or Opus 4.8 master** orchestrates; a **swarm of cheaper, specialized agents**
 does the work below it. The master fans out *only when it pays* — the goal is spending less,
-not spawning more. Fable is opt-in only: run it as the master if you've chosen it for your
+not spawning more. Fable 5 is opt-in only: run it as the master if you've chosen it for your
 session, but the swarm never routes to the expensive tier by accident.
 
 ## What you get
@@ -79,7 +79,7 @@ then throws independent skeptics at whatever they find — only survivors are re
 ```
   $ /audit "the uncommitted diff"
 
-  master · Fable / Opus
+  master · Fable 5 / Opus 4.8
   │
   ├─ FIND ── fan out one cheap tracer per lens (parallel)
   │    ├─ tracer: correctness ┐
@@ -95,41 +95,41 @@ then throws independent skeptics at whatever they find — only survivors are re
 tracer follows each, and a final synthesis pass assembles one map. The master spends
 this fan-out only when it pays (see below) — otherwise it stays solo.
 
-## Cheaper and faster than one Opus — when the work fits
+## Cheaper and faster than one Opus 4.8 — when the work fits
 
-Against a single Opus worker doing the same task set, claude-swarm wins on **both** cost
+Against a single Opus 4.8 worker doing the same task set, claude-swarm wins on **both** cost
 and speed for the work it's built to fan out — and deliberately declines to fan out the work
 where it wouldn't:
 
 - **Cheaper.** Most of a task is locating, reading, mechanical edits, and prose — none of it
   needs the top tier. Routing that to haiku- and sonnet-class agents means you stop paying
-  Opus rates for haiku-grade work. (The fan-out *itself* uses more total tokens than one
+  Opus 4.8 rates for haiku-grade work. (The fan-out *itself* uses more total tokens than one
   agent — duplicated context, a synthesis step — so the saving comes from the cheaper model
   tier and from keeping the expensive main context small, not from fanning out.)
 - **Faster.** On independent, multi-file work the agents run concurrently, so wall-clock is
   the *slowest single slice* rather than the sum; and the cheaper models are individually
-  faster than Opus (higher throughput, quicker first token). A six-file audit that's ~six
+  faster than Opus 4.8 (higher throughput, quicker first token). A six-file audit that's ~six
   units solo is ~one unit fanned out.
 
 **The catch, stated plainly:** for sequential or small work — one file, a question
 answerable from context already loaded — fan-out only adds orchestration round-trips with no
 parallelism to hide them, so it's *slower* and costs more. That is exactly why the routing
 rules push that work back to solo. Follow them and the swarm is as-fast-or-faster than solo
-Opus on the same task set; fan out inherently sequential work and you'll pay for the
+Opus 4.8 on the same task set; fan out inherently sequential work and you'll pay for the
 overhead with nothing to show for it. Speed and savings appear only where there's real
 parallelism or a cheaper tier that can do the job — and spending the swarm *only* there is
 the plugin's entire job.
 
 ## Cost model
 
-- **Master** = the main loop / a Workflow script on **Opus** — or **Fable** if
+- **Master** = the main loop / a Workflow script on **Opus 4.8** — or **Fable 5** if
   you've opted your session into it.
 - **Swarm** = haiku and sonnet agents, picked per task.
-- **Fable is opt-in only.** It is 2x Opus's price ($10/$50 vs $5/$25 per 1M) and is
-  never routed to automatically — it's proposed only for a task Opus has actually failed
+- **Fable 5 is opt-in only.** It is 2x Opus 4.8's price ($10/$50 vs $5/$25 per 1M) and is
+  never routed to automatically — it's proposed only for a task Opus 4.8 has actually failed
   at, with the cost named.
 - Sonnet 5 is on introductory pricing until **2026-08-31** ($2/$10 vs $3/$15), making the
-  sonnet-tier agents ~2.5x cheaper than Opus rather than 1.67x.
+  sonnet-tier agents ~2.5x cheaper than Opus 4.8 rather than 1.67x.
 
 ## Layout
 
