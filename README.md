@@ -68,6 +68,31 @@ Either way, bulk reading is delegated: if answering needs more than ~3 files or 
 a `scout` or `tracer` reads it and returns a summary, rather than pulling source into the
 main context where it's re-sent every turn.
 
+## Cheaper and faster than one Opus 4.8 — when the work fits
+
+Against a single Opus 4.8 worker doing the same task set, claude-swarm wins on **both** cost
+and speed for the work it's built to fan out — and deliberately declines to fan out the work
+where it wouldn't:
+
+- **Cheaper.** Most of a task is locating, reading, mechanical edits, and prose — none of it
+  needs the top tier. Routing that to haiku- and sonnet-class agents means you stop paying
+  Opus rates for haiku-grade work. (The fan-out *itself* uses more total tokens than one
+  agent — duplicated context, a synthesis step — so the saving comes from the cheaper model
+  tier and from keeping the expensive main context small, not from fanning out.)
+- **Faster.** On independent, multi-file work the agents run concurrently, so wall-clock is
+  the *slowest single slice* rather than the sum; and the cheaper models are individually
+  faster than Opus (higher throughput, quicker first token). A six-file audit that's ~six
+  units solo is ~one unit fanned out.
+
+**The catch, stated plainly:** for sequential or small work — one file, a question
+answerable from context already loaded — fan-out only adds orchestration round-trips with no
+parallelism to hide them, so it's *slower* and costs more. That is exactly why the routing
+rules push that work back to solo. Follow them and the swarm is as-fast-or-faster than solo
+Opus on the same task set; fan out inherently sequential work and you'll pay for the
+overhead with nothing to show for it. Speed and savings appear only where there's real
+parallelism or a cheaper tier that can do the job — and spending the swarm *only* there is
+the plugin's entire job.
+
 ## Cost model
 
 - **Master** = the main loop / a Workflow script on **Opus 4.8**.
@@ -94,6 +119,11 @@ claude-swarm/
 > Workflows live under `workflows/` and are installed by the hook because Claude Code
 > plugins cannot serve Workflow scripts natively — they resolve only from
 > `~/.claude/workflows/` or a project's `.claude/workflows/`.
+
+## Support
+
+claude-swarm is free and open source, built and maintained by one person. If it
+saved you some tokens, you can [buy me a coffee](https://ko-fi.com/phil9922). ☕
 
 ## License
 
