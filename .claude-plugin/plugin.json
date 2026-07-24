@@ -1,0 +1,22 @@
+{
+  "name": "claude-swarm",
+  "version": "0.1.0",
+  "description": "A cost-tiered multi-agent delegation system for Claude Code: an Opus 4.8 master orchestrator fans out a swarm of cheaper, specialized agents only when it pays. Ships six tiered agents, an orchestration skill, and two verify-by-default workflows.",
+  "author": {
+    "name": "phil9922",
+    "email": "phil9922@gmail.com"
+  },
+  "homepage": "https://github.com/phil9922/claude-swarm",
+  "repository": "https://github.com/phil9922/claude-swarm",
+  "license": "MIT",
+  "keywords": [
+    "agents",
+    "subagents",
+    "orchestration",
+    "swarm",
+    "delegation",
+    "workflows",
+    "cost-optimization",
+    "multi-agent"
+  ]
+}

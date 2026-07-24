@@ -1,0 +1,17 @@
+{
+  "name": "claude-swarm-marketplace",
+  "owner": {
+    "name": "phil9922",
+    "email": "phil9922@gmail.com"
+  },
+  "description": "Marketplace hosting the claude-swarm plugin.",
+  "plugins": [
+    {
+      "name": "claude-swarm",
+      "source": "./",
+      "description": "Cost-tiered multi-agent delegation for Claude Code: Opus 4.8 master, cheaper swarm below, fan out only when it pays.",
+      "category": "productivity",
+      "keywords": ["agents", "orchestration", "swarm", "delegation"]
+    }
+  ]
+}
