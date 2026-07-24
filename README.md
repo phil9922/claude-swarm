@@ -55,7 +55,16 @@ copies) and injects the delegation policy.
 
 **Requirement:** the SessionStart hook is a small Node script, so `node` must be on your
 `PATH`. If it isn't, the plugin still loads — you just won't get the auto-installed
-workflows or the injected policy.
+workflows or the injected policy. To install it:
+
+```
+brew install node                  # macOS
+sudo apt install nodejs            # Ubuntu/Debian
+winget install OpenJS.NodeJS.LTS   # Windows
+```
+
+Or any other method from [nodejs.org](https://nodejs.org/en/download) — the hook has no
+version requirement beyond a non-ancient Node.
 
 ## How it decides to fan out
 
