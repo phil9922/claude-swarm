@@ -1,6 +1,8 @@
-# claude-swarm
-
-A cost-tiered multi-agent delegation system for [Claude Code](https://claude.com/claude-code).
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="img/gh_header-dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="img/gh_header-light.png">
+  <img alt="claude-swarm — cost-tiered multi-agent delegation for Claude Code" src="img/gh_header-light.png">
+</picture>
 
 An **Opus 4.8 master** orchestrates; a **swarm of cheaper, specialized agents** does the
 work below it. The master fans out *only when it pays* — the goal is spending less, not
@@ -140,6 +142,7 @@ claude-swarm/
   hooks/                 # SessionStart: install workflows + inject policy
   test/smoke.js          # manifests + hook + workflows load (npm test)
   .github/workflows/     # CI: runs the smoke test on push/PR
+  img/                   # README header banner (light/dark)
 ```
 
 > Workflows live under `workflows/` and are installed by the hook because Claude Code
