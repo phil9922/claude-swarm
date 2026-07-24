@@ -108,11 +108,11 @@ then throws independent skeptics at whatever they find — only survivors are re
 tracer follows each, and a final synthesis pass assembles one map. The master spends
 this fan-out only when it pays (see below) — otherwise it stays solo.
 
-## Cheaper and faster than one Opus 4.8 — when the work fits
+## Cheaper and faster than Opus 4.8 — without losing quality
 
 Against a single Opus 4.8 worker doing the same task set, claude-swarm wins on **both** cost
-and speed for the work it's built to fan out — and deliberately declines to fan out the work
-where it wouldn't:
+and speed for the work it's built to fan out — without giving up quality to get there — and
+deliberately declines to fan out the work where it wouldn't:
 
 - **Cheaper.** Most of a task is locating, reading, mechanical edits, and prose — none of it
   needs the top tier. Routing that to haiku- and sonnet-class agents means you stop paying
@@ -123,6 +123,11 @@ where it wouldn't:
   the *slowest single slice* rather than the sum; and the cheaper models are individually
   faster than Opus 4.8 (higher throughput, quicker first token). A six-file audit that's ~six
   units solo is ~one unit fanned out.
+- **No quality loss.** The tier drops only where the task doesn't need the reasoning, never
+  where correctness is the constraint: production code stays with `implementer` on opus (the
+  **never downgrade** rule also protects the main loop), mechanical edits are graded by the
+  compiler and tests, and audit findings must survive adversarial verifiers that refute by
+  default — a check a solo worker doesn't get at all.
 
 **The catch, stated plainly:** for sequential or small work — one file, a question
 answerable from context already loaded — fan-out only adds orchestration round-trips with no
