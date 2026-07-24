@@ -4,9 +4,10 @@
   <img alt="claude-swarm — cost-tiered multi-agent delegation for Claude Code" src="img/gh_header-light.png">
 </picture>
 
-An **Opus 4.8 master** orchestrates; a **swarm of cheaper, specialized agents** does the
-work below it. The master fans out *only when it pays* — the goal is spending less, not
-spawning more. Fable is opt-in only, so the expensive tier never gets used by accident.
+An **Opus 4.8 or Fable 5 master** orchestrates; a **swarm of cheaper, specialized agents**
+does the work below it. The master fans out *only when it pays* — the goal is spending less,
+not spawning more. Fable is opt-in only: run it as the master if you've chosen it for your
+session, but the swarm never routes to the expensive tier by accident.
 
 ## What you get
 
@@ -78,7 +79,7 @@ then throws independent skeptics at whatever they find — only survivors are re
 ```
   $ /audit "the uncommitted diff"
 
-  master · Opus 4.8
+  master · Opus 4.8 / Fable 5
   │
   ├─ FIND ── fan out one cheap tracer per lens (parallel)
   │    ├─ tracer: correctness ┐
@@ -121,7 +122,8 @@ the plugin's entire job.
 
 ## Cost model
 
-- **Master** = the main loop / a Workflow script on **Opus 4.8**.
+- **Master** = the main loop / a Workflow script on **Opus 4.8** — or **Fable 5** if
+  you've opted your session into it.
 - **Swarm** = haiku and sonnet agents, picked per task.
 - **Fable 5 is opt-in only.** It is 2x Opus 4.8's price ($10/$50 vs $5/$25 per 1M) and is
   never routed to automatically — it's proposed only for a task Opus 4.8 has actually failed
