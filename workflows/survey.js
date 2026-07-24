@@ -9,9 +9,24 @@ export const meta = {
   ],
 }
 
+// The runtime may deliver `args` as a JSON-encoded string (that is how the Workflow
+// tool marshals a passed object). Normalize once: a string that parses to an object
+// becomes structured input; a plain non-JSON string stays as the bare question.
+let input = args
+if (typeof input === 'string') {
+  const s = input.trim()
+  if (s.startsWith('{') || s.startsWith('[')) {
+    try {
+      input = JSON.parse(s)
+    } catch (_) {
+      /* not JSON — keep the plain string as the question */
+    }
+  }
+}
+
 const question =
-  typeof args === 'string' ? args : (args && args.question) || 'How does this codebase work?'
-const focus = (args && args.focus) || ''
+  typeof input === 'string' ? input : (input && input.question) || 'How does this codebase work?'
+const focus = (input && input.focus) || ''
 
 const DEFAULT_ANGLES = [
   { key: 'entry', lens: 'Entry points and public API — how callers get in, what the exported surface is.' },
@@ -24,7 +39,7 @@ const DEFAULT_ANGLES = [
 // Only use provided angles when it is a non-empty array; an empty array must not
 // collapse into the "nothing found" path below and mislabel a misconfig as a no-match.
 const angles =
-  args && Array.isArray(args.angles) && args.angles.length ? args.angles : DEFAULT_ANGLES
+  input && Array.isArray(input.angles) && input.angles.length ? input.angles : DEFAULT_ANGLES
 
 const LOCATIONS = {
   type: 'object',

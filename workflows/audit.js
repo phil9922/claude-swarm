@@ -8,12 +8,27 @@ export const meta = {
   ],
 }
 
+// The runtime may deliver `args` as a JSON-encoded string (that is how the Workflow
+// tool marshals a passed object). Normalize once: a string that parses to an object
+// becomes structured input; a plain non-JSON string stays as the bare target.
+let input = args
+if (typeof input === 'string') {
+  const s = input.trim()
+  if (s.startsWith('{') || s.startsWith('[')) {
+    try {
+      input = JSON.parse(s)
+    } catch (_) {
+      /* not JSON — keep the plain string as the target */
+    }
+  }
+}
+
 const target =
-  typeof args === 'string' ? args : (args && args.target) || 'the uncommitted changes on this branch'
+  typeof input === 'string' ? input : (input && input.target) || 'the uncommitted changes on this branch'
 // Required surviving (non-refuting) votes to confirm. Validate explicitly so an
 // intentional 0 is not swallowed by `||`, and a negative/non-integer does not wedge
 // the threshold. Any coercion is logged, never silent.
-const rawVotes = args && typeof args === 'object' ? args.votes : undefined
+const rawVotes = input && typeof input === 'object' ? input.votes : undefined
 let VOTES = 2
 if (rawVotes != null) {
   if (Number.isInteger(rawVotes) && rawVotes >= 0) VOTES = rawVotes
@@ -32,7 +47,7 @@ const DEFAULT_LENSES = [
 // Only use provided lenses when it is a non-empty array; an empty array must not
 // silently produce a zero-lens (false-clean) audit.
 const lenses =
-  args && Array.isArray(args.lenses) && args.lenses.length ? args.lenses : DEFAULT_LENSES
+  input && Array.isArray(input.lenses) && input.lenses.length ? input.lenses : DEFAULT_LENSES
 
 const FINDINGS = {
   type: 'object',

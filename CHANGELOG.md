@@ -8,6 +8,10 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html): the git tag
 ## [Unreleased]
 
 ### Fixed
+- `audit`/`survey`: accept `args` delivered as a JSON-encoded string (how the Workflow
+  tool marshals a passed object), not only as a live object. Previously a JSON string was
+  mistaken for the bare target/question, so `lenses` / `votes` / `angles` were silently
+  discarded and the workflow ran its full defaults.
 - `audit`: `votes >= 4` no longer makes confirmation mathematically impossible — the
   skeptic pool now scales to `votes + 1` by cycling the doubt angles, and `votes` is
   validated (an explicit `0` is honored; negative/non-integer values coerce to the
