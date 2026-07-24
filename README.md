@@ -59,8 +59,12 @@ workflows or the injected policy.
 
 ## How it decides to fan out
 
-Fan-out costs more *total* tokens than one agent doing the same work — it buys speed and
-coverage, not savings. So the master spends it deliberately:
+Fan-out always uses more *total tokens* than one agent doing the same work — duplicated
+context, plus a synthesis step. That's not the same as costing more *money*: when the work
+fits, most of those tokens are billed at haiku/sonnet rates instead of Opus 4.8 rates, so
+the bill still shrinks (see "Cheaper and faster" below). The fan-out itself buys speed and
+coverage; the cheap tiers are where the savings come from. So the master spends it
+deliberately:
 
 - **Swarm** — audits/reviews, multi-file features, "find every X", migrations, mapping an
   unfamiliar subsystem, anything touching 4+ files.
@@ -103,9 +107,9 @@ where it wouldn't:
 
 - **Cheaper.** Most of a task is locating, reading, mechanical edits, and prose — none of it
   needs the top tier. Routing that to haiku- and sonnet-class agents means you stop paying
-  Opus 4.8 rates for haiku-grade work. (The fan-out *itself* uses more total tokens than one
-  agent — duplicated context, a synthesis step — so the saving comes from the cheaper model
-  tier and from keeping the expensive main context small, not from fanning out.)
+  Opus 4.8 rates for haiku-grade work. (As above: the fan-out *itself* uses more total
+  tokens — the saving comes from the cheaper model tier and from keeping the expensive main
+  context small, not from fanning out.)
 - **Faster.** On independent, multi-file work the agents run concurrently, so wall-clock is
   the *slowest single slice* rather than the sum; and the cheaper models are individually
   faster than Opus 4.8 (higher throughput, quicker first token). A six-file audit that's ~six
