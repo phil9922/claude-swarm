@@ -21,15 +21,16 @@ const path = require('path')
 
 const WORKFLOWS = ['survey.js', 'audit.js']
 
-// Resolve the plugin root (env var is set by Claude Code; fall back to __dirname).
-const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT || path.resolve(__dirname, '..')
-
-// Resolve the user's Claude config dir (honor an override if the user set one).
-const configDir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')
-const workflowsDir = path.join(configDir, 'workflows')
-
 const installed = []
 try {
+  // Resolve inside the try so a throw here (e.g. os.homedir() failing) is caught
+  // and the policy below still ships — the whole point of "never break a session".
+  // Plugin root: env var is set by Claude Code; fall back to __dirname.
+  const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT || path.resolve(__dirname, '..')
+  // User's Claude config dir (honor an override if the user set one).
+  const configDir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')
+  const workflowsDir = path.join(configDir, 'workflows')
+
   fs.mkdirSync(workflowsDir, { recursive: true })
   for (const name of WORKFLOWS) {
     const dest = path.join(workflowsDir, name)

@@ -20,6 +20,7 @@
 'use strict'
 
 const fs = require('fs')
+const os = require('os')
 const path = require('path')
 const { execFileSync } = require('child_process')
 
@@ -70,10 +71,46 @@ check('hooks.json registers a SessionStart command hook', () => {
 
 // --- 2. Hook script compiles (CommonJS — node --check is correct here) ------
 
+const HOOK = path.join(root, 'hooks/session-start.js')
+
 check('hooks/session-start.js is syntactically valid', () => {
-  execFileSync(process.execPath, ['--check', path.join(root, 'hooks/session-start.js')], {
-    stdio: 'pipe',
-  })
+  execFileSync(process.execPath, ['--check', HOOK], { stdio: 'pipe' })
+})
+
+// --- 2b. Hook runtime contract: always ships the policy ---------------------
+
+check('hook emits policy JSON and installs the workflows (happy path)', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-smoke-'))
+  try {
+    const out = execFileSync(process.execPath, [HOOK], {
+      encoding: 'utf8',
+      env: { ...process.env, CLAUDE_CONFIG_DIR: tmp, CLAUDE_PLUGIN_ROOT: root },
+    })
+    const o = JSON.parse(out)
+    assert(o.hookSpecificOutput.hookEventName === 'SessionStart', 'SessionStart output required')
+    assert(/delegation policy/.test(o.hookSpecificOutput.additionalContext), 'policy must be present')
+    for (const wf of ['survey.js', 'audit.js']) {
+      assert(fs.existsSync(path.join(tmp, 'workflows', wf)), `${wf} should be installed`)
+    }
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true })
+  }
+})
+
+check('hook still ships the policy when config-dir resolution throws', () => {
+  // Regression guard for the fix moving os.homedir()/env resolution inside the
+  // install try/catch: force homedir() to throw and confirm the hook does not
+  // abort the session but still emits the policy.
+  const out = execFileSync(
+    process.execPath,
+    ['-e', "require('os').homedir=()=>{throw new Error('boom')};require(process.argv[1])", HOOK],
+    { encoding: 'utf8', env: { ...process.env, CLAUDE_CONFIG_DIR: '' } },
+  )
+  const o = JSON.parse(out)
+  assert(
+    /delegation policy/.test(o.hookSpecificOutput.additionalContext),
+    'policy must ship even when homedir() throws',
+  )
 })
 
 // --- 3. Workflows compile, and their meta is well-formed -------------------
