@@ -114,6 +114,8 @@ claude-swarm/
   skills/claude-swarm/   # the orchestration playbook
   workflows/             # survey.js, audit.js (installed to ~/.claude/workflows/)
   hooks/                 # SessionStart: install workflows + inject policy
+  test/smoke.js          # manifests + hook + workflows load (npm test)
+  .github/workflows/     # CI: runs the smoke test on push/PR
 ```
 
 > Workflows live under `workflows/` and are installed by the hook because Claude Code
