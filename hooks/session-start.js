@@ -46,7 +46,7 @@ try {
 
 const POLICY = `# claude-swarm delegation policy
 
-Master = the main loop / a Workflow script on **Opus 4.8**. It orchestrates; a swarm
+Master = the main loop / a Workflow script on **Fable or Opus**. It orchestrates; a swarm
 of cheaper, specialized agents does the work below it. The goal is spending *less*,
 not spawning more.
 
@@ -79,8 +79,8 @@ Saved workflows: \`survey\` (map an area), \`audit\` (find, then adversarially v
 - No silent truncation — if a cap or sampling dropped coverage, say so.
 - Never downgrade the model writing production code, or the main loop.
 - Verify before reporting done: run the build/tests, read the artifact on disk.
-- **Fable 5 is opt-in only** (2x Opus 4.8's price, $10/$50 vs $5/$25 per 1M). Never route
-  to it automatically; propose it only for a task Opus 4.8 has actually failed, and name
+- **Fable is opt-in only** (2x Opus's price, $10/$50 vs $5/$25 per 1M). Never route
+  to it automatically; propose it only for a task Opus has actually failed, and name
   the cost.
 
 Load the \`claude-swarm\` skill for the full orchestration playbook (how to author a

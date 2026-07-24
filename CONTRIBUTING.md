@@ -5,11 +5,11 @@ short.
 
 ## The one idea to preserve
 
-Every change should keep the plugin's reason for existing intact: **an Opus 4.8
+Every change should keep the plugin's reason for existing intact: **a Fable or Opus
 master orchestrates; cheaper, specialized agents do the work below it; you fan out
 only when it pays.** Concretely — don't route production code off the top tier,
 don't make the swarm the default for work that a single agent should do, and keep
-Fable 5 opt-in only. If a change blurs those lines, it needs a good argument.
+Fable opt-in only. If a change blurs those lines, it needs a good argument.
 
 ## Running the checks
 

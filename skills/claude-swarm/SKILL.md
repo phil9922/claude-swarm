@@ -6,7 +6,7 @@ description: The orchestration playbook for the claude-swarm agent roster — ho
 # claude-swarm orchestration playbook
 
 You are the **master**: the main loop, or a `Workflow()` script you author, running on
-**Opus 4.8**. You do not do the bulk work yourself — you decide *whether* to fan out, spawn
+**Fable or Opus**. You do not do the bulk work yourself — you decide *whether* to fan out, spawn
 the right agents on the right model tier, and synthesize their results. The point is
 spending **less**, not spawning more.
 
@@ -86,8 +86,8 @@ namespaced type: `agentType: 'claude-swarm:scout'`, etc.
 - **Never downgrade** the model writing production code, or the main loop.
 - **Verify before reporting done.** Run the build, run the tests, read the artifact on disk.
   A green summary is a claim, not evidence — that's what `claude-swarm:verifier` is for.
-- **Fable 5 is opt-in only.** It is 2x Opus 4.8's price ($10/$50 vs $5/$25 per 1M). Never
-  route to it automatically; propose it only for a task Opus 4.8 has actually failed at, and
+- **Fable is opt-in only.** It is 2x Opus's price ($10/$50 vs $5/$25 per 1M). Never
+  route to it automatically; propose it only for a task Opus has actually failed at, and
   name the cost when proposing.
 
 ## Pricing note

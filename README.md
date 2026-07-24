@@ -4,7 +4,7 @@
   <img alt="claude-swarm — cost-tiered multi-agent delegation for Claude Code" src="img/gh_header-light.png">
 </picture>
 
-An **Opus 4.8 or Fable 5 master** orchestrates; a **swarm of cheaper, specialized agents**
+A **Fable or Opus master** orchestrates; a **swarm of cheaper, specialized agents**
 does the work below it. The master fans out *only when it pays* — the goal is spending less,
 not spawning more. Fable is opt-in only: run it as the master if you've chosen it for your
 session, but the swarm never routes to the expensive tier by accident.
@@ -79,7 +79,7 @@ then throws independent skeptics at whatever they find — only survivors are re
 ```
   $ /audit "the uncommitted diff"
 
-  master · Opus 4.8 / Fable 5
+  master · Fable / Opus
   │
   ├─ FIND ── fan out one cheap tracer per lens (parallel)
   │    ├─ tracer: correctness ┐
@@ -95,9 +95,9 @@ then throws independent skeptics at whatever they find — only survivors are re
 tracer follows each, and a final synthesis pass assembles one map. The master spends
 this fan-out only when it pays (see below) — otherwise it stays solo.
 
-## Cheaper and faster than one Opus 4.8 — when the work fits
+## Cheaper and faster than one Opus — when the work fits
 
-Against a single Opus 4.8 worker doing the same task set, claude-swarm wins on **both** cost
+Against a single Opus worker doing the same task set, claude-swarm wins on **both** cost
 and speed for the work it's built to fan out — and deliberately declines to fan out the work
 where it wouldn't:
 
@@ -122,11 +122,11 @@ the plugin's entire job.
 
 ## Cost model
 
-- **Master** = the main loop / a Workflow script on **Opus 4.8** — or **Fable 5** if
+- **Master** = the main loop / a Workflow script on **Opus** — or **Fable** if
   you've opted your session into it.
 - **Swarm** = haiku and sonnet agents, picked per task.
-- **Fable 5 is opt-in only.** It is 2x Opus 4.8's price ($10/$50 vs $5/$25 per 1M) and is
-  never routed to automatically — it's proposed only for a task Opus 4.8 has actually failed
+- **Fable is opt-in only.** It is 2x Opus's price ($10/$50 vs $5/$25 per 1M) and is
+  never routed to automatically — it's proposed only for a task Opus has actually failed
   at, with the cost named.
 - Sonnet 5 is on introductory pricing until **2026-08-31** ($2/$10 vs $3/$15), making the
   sonnet-tier agents ~2.5x cheaper than Opus rather than 1.67x.
