@@ -1,7 +1,7 @@
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="img/gh_header-dark.png">
-  <source media="(prefers-color-scheme: light)" srcset="img/gh_header-light.png">
-  <img alt="claude-swarm — cost-tiered multi-agent delegation for Claude Code" src="img/gh_header-light.png">
+  <source media="(prefers-color-scheme: dark)" srcset="img/header-dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="img/header-light.png">
+  <img alt="claude-swarm — cost-tiered multi-agent delegation for Claude Code" src="img/header-light.png">
 </picture>
 
 A **Fable or Opus master** orchestrates; a **swarm of cheaper, specialized agents**
