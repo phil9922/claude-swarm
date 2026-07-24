@@ -68,6 +68,30 @@ Either way, bulk reading is delegated: if answering needs more than ~3 files or 
 a `scout` or `tracer` reads it and returns a summary, rather than pulling source into the
 main context where it's re-sent every turn.
 
+## What a fan-out looks like
+
+`audit` is the pattern in miniature: the master fans cheap readers across lenses,
+then throws independent skeptics at whatever they find — only survivors are reported.
+
+```
+  $ /audit "the uncommitted diff"
+
+  master · Opus 4.8
+  │
+  ├─ FIND ── fan out one cheap tracer per lens (parallel)
+  │    ├─ tracer: correctness ┐
+  │    ├─ tracer: errors      ├─ candidate findings
+  │    └─ tracer: concurrency ┘
+  │
+  └─ VERIFY ── each finding → N verifiers try to refute it (parallel)
+       ├─ ✗ refuted  → dropped
+       └─ ✓ survived → confirmed
+```
+
+`survey` shares the skeleton with different muscles: scouts locate across angles, a
+tracer follows each, and a final synthesis pass assembles one map. The master spends
+this fan-out only when it pays (see below) — otherwise it stays solo.
+
 ## Cheaper and faster than one Opus 4.8 — when the work fits
 
 Against a single Opus 4.8 worker doing the same task set, claude-swarm wins on **both** cost

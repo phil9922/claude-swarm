@@ -7,7 +7,23 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html): the git tag
 
 ## [Unreleased]
 
-_Nothing yet._
+### Fixed
+- `audit`: `votes >= 4` no longer makes confirmation mathematically impossible — the
+  skeptic pool now scales to `votes + 1` by cycling the doubt angles, and `votes` is
+  validated (an explicit `0` is honored; negative/non-integer values coerce to the
+  default *with a log*, not silently).
+- `audit`: findings whose verifiers all failed to run are now reported as `unverified`
+  rather than silently miscounted as refuted.
+- `audit`/`survey`: an empty `lenses` / `angles` array falls back to the defaults
+  instead of producing a false-clean audit or a misleading "no match" survey.
+- `survey`: a trace-stage failure is now logged (not silently dropped, which made the
+  coverage line lie), and a failed synthesis falls back to the raw readings instead of
+  returning `null`.
+
+### Added
+- README: a fan-out diagram showing the `audit`/`survey` shape.
+
+_Found by running the plugin's own `survey` and `audit` workflows against itself._
 
 ## [0.1.0] — 2026-07-24
 

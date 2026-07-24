@@ -21,7 +21,10 @@ const DEFAULT_ANGLES = [
   { key: 'errors', lens: 'Error paths, edge cases, and failure handling — what happens when things go wrong.' },
 ]
 
-const angles = (args && args.angles) || DEFAULT_ANGLES
+// Only use provided angles when it is a non-empty array; an empty array must not
+// collapse into the "nothing found" path below and mislabel a misconfig as a no-match.
+const angles =
+  args && Array.isArray(args.angles) && args.angles.length ? args.angles : DEFAULT_ANGLES
 
 const LOCATIONS = {
   type: 'object',
@@ -90,7 +93,15 @@ Read them and whatever they lead to. Follow the real control flow through
 interfaces and indirection to the concrete implementation. Answer the angle.
 The caller cannot see anything you read — your summary is all they get.`,
       { agentType: 'claude-swarm:tracer', label: `trace:${angle.key}`, phase: 'Trace', schema: THREAD },
-    ).then((t) => (t ? { angle: angle.key, lens: angle.lens, ...t } : null))
+    ).then((t) => {
+      if (!t) {
+        // Distinguish a tracer failure (the scout DID find locations) from an angle
+        // that genuinely located nothing — otherwise the coverage line below lies.
+        log(`  ${angle.key}: located, but tracing failed — dropped`)
+        return null
+      }
+      return { angle: angle.key, lens: angle.lens, ...t }
+    })
   },
 )
 
@@ -98,11 +109,11 @@ const found = threads.filter(Boolean)
 
 if (found.length === 0) {
   log('No angle produced a result.')
-  return { question, answer: 'Nothing found. The question may not match this codebase.', threads: [] }
+  return { question, answer: 'Nothing found — every angle either located nothing or failed to trace.', threads: [] }
 }
 
 if (found.length < angles.length) {
-  log(`Coverage: ${found.length}/${angles.length} angles returned — the rest found nothing.`)
+  log(`Coverage: ${found.length}/${angles.length} angles returned — the rest found nothing or failed to trace.`)
 }
 
 phase('Synthesize')
@@ -135,7 +146,8 @@ the obvious.`,
 
 return {
   question,
-  answer: map,
+  // If synthesis itself failed, fall back to the raw readings rather than returning null.
+  answer: map || `Synthesis failed; here are the ${found.length} raw readings:\n\n${brief}`,
   anglesCovered: found.map((t) => t.angle),
   anglesEmpty: angles.map((a) => a.key).filter((k) => !found.some((t) => t.angle === k)),
   threads: found,

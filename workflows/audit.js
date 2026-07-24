@@ -10,7 +10,15 @@ export const meta = {
 
 const target =
   typeof args === 'string' ? args : (args && args.target) || 'the uncommitted changes on this branch'
-const VOTES = (args && args.votes) || 2
+// Required surviving (non-refuting) votes to confirm. Validate explicitly so an
+// intentional 0 is not swallowed by `||`, and a negative/non-integer does not wedge
+// the threshold. Any coercion is logged, never silent.
+const rawVotes = args && typeof args === 'object' ? args.votes : undefined
+let VOTES = 2
+if (rawVotes != null) {
+  if (Number.isInteger(rawVotes) && rawVotes >= 0) VOTES = rawVotes
+  else log(`ignoring invalid votes=${JSON.stringify(rawVotes)}; using default ${VOTES}`)
+}
 
 const DEFAULT_LENSES = [
   { key: 'correctness', lens: 'Logic errors: off-by-one, inverted conditions, wrong operator, unhandled nil/empty/zero, incorrect early return, state mutated in the wrong order.' },
@@ -21,7 +29,10 @@ const DEFAULT_LENSES = [
   { key: 'contract', lens: 'Contract drift: code that does not do what its name, comment, or docs claim; a default that contradicts documentation; an invariant asserted in one place and violated in another.' },
 ]
 
-const lenses = (args && args.lenses) || DEFAULT_LENSES
+// Only use provided lenses when it is a non-empty array; an empty array must not
+// silently produce a zero-lens (false-clean) audit.
+const lenses =
+  args && Array.isArray(args.lenses) && args.lenses.length ? args.lenses : DEFAULT_LENSES
 
 const FINDINGS = {
   type: 'object',
@@ -62,6 +73,14 @@ const LENSES_OF_DOUBT = [
   'Is this contradicted by the tests or by existing behavior? If a test already covers this and passes, work out why — either the finding is wrong or the test is.',
 ]
 
+// Run VOTES + 1 skeptics per finding, cycling the doubt angles when more are needed
+// than the pool holds, so a higher `votes` raises scrutiny instead of making
+// confirmation (survived >= VOTES) mathematically impossible.
+const skeptics = Array.from(
+  { length: VOTES + 1 },
+  (_, i) => LENSES_OF_DOUBT[i % LENSES_OF_DOUBT.length],
+)
+
 log(`Auditing ${target} across ${lenses.length} lenses, ${VOTES}-vote refutation`)
 
 const perLens = await pipeline(
@@ -95,7 +114,7 @@ If the lens finds nothing, return an empty list rather than padding.`,
     return parallel(
       findings.map((f) => () =>
         parallel(
-          LENSES_OF_DOUBT.slice(0, VOTES + 1).map((doubt, i) => () =>
+          skeptics.map((doubt, i) => () =>
             agent(
               `A finding has been reported. Your job is to REFUTE it.
 
@@ -130,10 +149,17 @@ an unproven finding must not survive as a confirmed one.`,
 )
 
 const judged = perLens.flat().filter(Boolean)
-const confirmed = judged.filter((f) => f.survived >= VOTES)
-const killed = judged.length - confirmed.length
+// A finding whose skeptics all failed to run (cast === 0) is unverified, NOT refuted —
+// bucket it separately so a transient verifier outage is never scored as a refutation.
+const verified = judged.filter((f) => f.cast > 0)
+const unverified = judged.filter((f) => f.cast === 0)
+const confirmed = verified.filter((f) => f.survived >= VOTES)
+const refuted = verified.filter((f) => f.survived < VOTES)
 
-log(`${judged.length} candidates → ${confirmed.length} confirmed, ${killed} refuted`)
+log(
+  `${judged.length} candidates → ${confirmed.length} confirmed, ${refuted.length} refuted` +
+    (unverified.length ? `, ${unverified.length} unverified (skeptics failed to run)` : ''),
+)
 
 const emptyLenses = lenses
   .map((l) => l.key)
@@ -152,7 +178,12 @@ return {
       confidence: `${f.survived}/${f.cast} skeptics failed to refute`,
       executed: f.executed,
     })),
-  refutedCount: killed,
+  refutedCount: refuted.length,
+  unverified: unverified.map((f) => ({ title: f.title, file: f.file, lens: f.lens })),
   lensesClean: emptyLenses,
-  note: `Findings surviving ${VOTES} of ${VOTES + 1} independent refutation attempts. Lenses returning nothing: ${emptyLenses.length ? emptyLenses.join(', ') : 'none'}.`,
+  note: `Findings surviving ${VOTES} of ${VOTES + 1} independent refutation attempts.${
+    unverified.length
+      ? ` ${unverified.length} finding(s) could not be verified (all skeptics failed) and are reported separately, not as refuted.`
+      : ''
+  } Lenses returning nothing: ${emptyLenses.length ? emptyLenses.join(', ') : 'none'}.`,
 }
