@@ -36,6 +36,9 @@ how to spread work: when to fan out vs. stay solo, which agent to route to, how 
 **An always-on delegation policy**, injected each session by a SessionStart hook, so the
 routing rules are in context without editing your `CLAUDE.md`.
 
+**A savings counter** (`/claude-swarm:savings`) — what the delegated work actually cost
+against what the same tokens would have cost on Opus, per project and lifetime.
+
 ## Install
 
 ```
@@ -149,6 +152,56 @@ the plugin's entire job.
 - Sonnet 5 is on introductory pricing until **2026-08-31** ($2/$10 vs $3/$15), making the
   sonnet-tier agents ~2.5x cheaper than Opus rather than 1.67x.
 
+## Checking whether it actually paid
+
+The section above is an argument. This is the measurement:
+
+```
+/claude-swarm:savings
+```
+
+```
+claude-swarm — this project
+
+  verifier   sonnet    $23.06   →   $57.65 on Opus
+  tracer     sonnet     $3.18   →    $7.96 on Opus
+  scout      haiku      $0.66   →    $3.29 on Opus
+  ───────────────────────────────────────────────
+  spent                $26.90   vs   $68.90
+
+  saved $42.00 (61%)
+```
+
+Add `--all` for a per-project breakdown across every project on the machine. The
+SessionStart hook shows the same headline as a single line, refreshed whenever you run
+the command.
+
+**Read the number honestly.** It prices the tokens your swarm *actually spent* at Opus
+rates. A solo Opus run would not have spent those same tokens — fan-out costs more tokens
+than one agent doing the same work, which is the point made further up. So this is an
+upper bound on what you saved, not a measurement of it. Every surface that prints the
+figure says so.
+
+Some details worth knowing:
+
+- **`implementer` is excluded.** It runs on Opus by design, so there is no tier delta to
+  count and including it would only dilute the percentage.
+- **Turns are priced by their own timestamp**, so Sonnet 5's introductory rate lapsing on
+  2026-08-31 is handled rather than quietly making the number wrong.
+- **Models with no list price on file are reported, not guessed at** — the same
+  no-silent-truncation rule the agents follow.
+- **Attribution is imperfect in one specific way.** Workflow-spawned agents record a bare
+  name (`tracer`) rather than the plugin-qualified one (`claude-swarm:tracer`), so if you
+  also keep an identically-named agent in your own `~/.claude/agents/`, its turns are
+  counted too. Same roster, same tiers, so the arithmetic holds — but it is savings from
+  delegating to cheaper tiers, not proof that this plugin caused all of it.
+- **It reads usage metadata only** — model, token counts, timestamps, agent names. Never
+  prompt or response text. This matters because `--all` walks every project directory
+  Claude Code has recorded, not just this one.
+
+Totals are cached under `~/.claude/claude-swarm/`, keyed on each transcript's size and
+mtime, so repeat runs only re-read the session still being written.
+
 ## Layout
 
 ```
@@ -159,8 +212,10 @@ claude-swarm/
   agents/                # the six tiered agents
   skills/claude-swarm/   # the orchestration playbook
   workflows/             # survey.js, audit.js (auto-discovered by Claude Code)
-  hooks/                 # SessionStart: inject the delegation policy
-  test/smoke.js          # manifests + hook + workflows load (npm test)
+  commands/              # /claude-swarm:savings
+  lib/tally.js           # the savings tallier (zero dependencies)
+  hooks/                 # SessionStart: policy + the savings line
+  test/smoke.js          # manifests + hook + workflows + tally (npm test)
   .github/workflows/     # CI: runs the smoke test on push/PR
   img/                   # README header banner (light/dark)
 ```

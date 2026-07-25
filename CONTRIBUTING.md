@@ -34,9 +34,17 @@ every push and pull request — **keep it green.** Requires `node` on your `PATH
   with a pure-literal `export const meta = { name, description, phases }`. Leave the
   `LEGACY_COPIES` list in `hooks/session-start.js` alone — that is a fixed record of
   what v0.1.1 and earlier copied into `~/.claude/workflows/`, not a registry.
+- **A new command** — add `commands/<name>.md` with frontmatter (`name`,
+  `description`, and `allowed-tools` if it shells out). Auto-discovered like the
+  rest, so it resolves as `/claude-swarm:<name>` with no wiring.
 - **The delegation policy** — the compact version injected each session lives in
   `hooks/session-start.js`; the full playbook is `skills/claude-swarm/SKILL.md`.
   Keep them consistent when you change routing rules.
+- **Model pricing** — `PRICES` in `lib/tally.js` is the only machine-readable copy;
+  the rest is prose in the README, the injected policy, and the skill. If rates
+  change, all four move together. Rates carry their own validation story: check any
+  edit against Claude Code's own `lastModelUsage` figures in `~/.claude.json` rather
+  than trusting the unit tests, which only assert against fixtures we wrote.
 
 ## Commits, versions, and releases
 

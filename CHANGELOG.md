@@ -7,6 +7,30 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html): the git tag
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-07-24
+
+### Added
+- A savings counter. `/claude-swarm:savings` reports what the work routed to the
+  cheaper roster agents actually cost against what the same tokens would have cost
+  on Opus, for the current project or — with `--all` — every project on the machine.
+  The SessionStart hook appends the same figure as a single line.
+- `lib/tally.js`, the zero-dependency tallier behind both. It reads usage metadata
+  only — model, token counts, timestamps, agent names — never prompt or response
+  text, which matters because the lifetime total walks every project directory.
+- `commands/`, the plugin's first slash command directory.
+
+### Notes on the numbers
+- The savings figure is an **upper bound**: it prices the tokens the swarm actually
+  spent at Opus rates, and a solo Opus run would have spent fewer tokens overall.
+  Every surface that shows the figure also carries that caveat.
+- `implementer` is excluded — it runs on Opus by design, so it has no tier delta.
+- Turns are priced by their own timestamp, so Sonnet 5's introductory rate lapsing
+  on 2026-08-31 is handled rather than silently drifting.
+- Models with no list price on file are reported, never guessed at or dropped.
+- Rates were validated against Claude Code's own cost accounting: Haiku matches to
+  the cent, and the Opus figure falls inside the bracket implied by the 5-minute and
+  1-hour cache-write multipliers.
+
 ## [0.1.2] — 2026-07-24
 
 ### Changed
