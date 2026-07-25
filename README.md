@@ -66,6 +66,52 @@ winget install OpenJS.NodeJS.LTS   # Windows
 Or any other method from [nodejs.org](https://nodejs.org/en/download) — the hook has no
 version requirement beyond a non-ancient Node.
 
+### Post-install: keep `Explore` cheap
+
+**This is the one step the plugin cannot do for you, and skipping it quietly undoes much of
+the saving.**
+
+Claude Code ships a built-in `Explore` agent and reaches for it constantly — it is usually
+the most-spawned agent in a session by a wide margin. It used to always run on Haiku. Since
+Claude Code v2.1.198 it **inherits the main conversation's model instead** (capped at Opus
+on the Claude API). So on an Opus session, every ambient "go look that up" now bills at
+Opus — exactly the cost this plugin exists to avoid.
+
+A subagent named `Explore` overrides the built-in and keeps its own `model` field. But it
+**must be a user or project agent** — a plugin cannot supply one, because plugin agents
+register under a namespaced identifier (`claude-swarm:explore`, not `Explore`) and rank
+lowest in scope precedence. That is why this is a manual step rather than a seventh agent
+in `agents/`.
+
+Create `~/.claude/agents/Explore.md`:
+
+```markdown
+---
+name: Explore
+description: Fast, read-only agent for searching and analyzing codebases.
+model: haiku
+tools: Read, Glob, Grep, Bash
+---
+
+Search and analyze the codebase. Return paths, line numbers, and short excerpts —
+not full file dumps. Do not modify anything.
+```
+
+Restart the session afterwards. If you would rather not override it at all, set
+`CLAUDE_CODE_DISABLE_EXPLORE_PLAN_AGENTS=1` to remove the built-in `Explore` and `Plan`
+agents entirely — Claude then reads files directly instead of delegating to them.
+
+The SessionStart hook mentions this once per session while that file is absent, and goes
+quiet as soon as it exists.
+
+### If you previously copied the agents into `~/.claude/agents/`
+
+Remove them, or switch to the namespaced names. The plugin serves the roster itself as
+`claude-swarm:scout` and friends. A bare-named copy in `~/.claude/agents/` does **not**
+shadow the plugin's — it registers as a *separate* agent, so you end up with two rosters
+under two sets of names, and a delegation policy naming one fails against the other with
+`Agent type '<name>' not found`. The hook detects this and names the files.
+
 ## How it decides to fan out
 
 Fan-out always uses more *total tokens* than one agent doing the same work — duplicated
@@ -143,11 +189,24 @@ the plugin's entire job.
 - **Master** = the main loop / a Workflow script on **Opus** — or **Fable** if
   you've opted your session into it.
 - **Swarm** = haiku and sonnet agents, picked per task.
-- **Fable is opt-in only.** It is 2x Opus's price ($10/$50 vs $5/$25 per 1M) and is
-  never routed to automatically — it's proposed only for a task Opus has actually failed
-  at, with the cost named.
-- Sonnet 5 is on introductory pricing until **2026-08-31** ($2/$10 vs $3/$15), making the
-  sonnet-tier agents ~2.5x cheaper than Opus rather than 1.67x.
+- **The routing depends on one thing: the ordering `haiku < sonnet < opus < fable`.**
+  That holds on every plan and every provider, which is why it's what the rules are
+  written against.
+- **Fable is opt-in only.** It sits above Opus at the top of that ladder and is never
+  routed to automatically — it's proposed only for a task Opus has actually failed at,
+  with the cost named.
+
+Deliberately absent: per-token dollar figures. On a subscription plan there is no
+per-token price to reason about, and on API billing the published rates move — a number
+baked into this README would be wrong for some readers and stale for the rest. See
+[Anthropic's pricing](https://www.anthropic.com/pricing) for current rates; nothing in this
+plugin's routing needs them.
+
+One thing worth knowing, because it makes every agent cost more than it used to: since
+Claude Code v2.1.198 subagents **inherit the main conversation's extended thinking
+configuration**. Previously they ran with it off unconditionally. Same roster, same task,
+higher bill when thinking is on — and turning it down in the main session turns it down for
+the whole swarm.
 
 ## Layout
 

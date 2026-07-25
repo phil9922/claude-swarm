@@ -125,6 +125,128 @@ check('hook reports pre-0.1.2 leftover workflow copies without deleting them', (
   }
 })
 
+// --- 2c. Hook detections: each fires only on its own trigger ----------------
+
+// Runs the hook against a scratch config dir and returns its additionalContext.
+// `seed` populates the dir; `env` overrides the environment.
+function hookContext({ seed = () => {}, env = {} } = {}) {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-smoke-'))
+  try {
+    seed(tmp)
+    const out = execFileSync(process.execPath, [HOOK], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        CLAUDE_CONFIG_DIR: tmp,
+        CLAUDE_PLUGIN_ROOT: root,
+        CLAUDE_CODE_SUBAGENT_MODEL: '',
+        ...env,
+      },
+    })
+    return JSON.parse(out).hookSpecificOutput.additionalContext
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true })
+  }
+}
+
+const ROSTER = ['scout', 'tracer', 'implementer', 'mechanic', 'verifier', 'scribe']
+const seedAgents = (names) => (tmp) => {
+  fs.mkdirSync(path.join(tmp, 'agents'), { recursive: true })
+  for (const n of names) fs.writeFileSync(path.join(tmp, 'agents', `${n}.md`), '# copy\n')
+}
+// An installed Explore override silences that notice — the "correctly configured"
+// baseline the other detection tests want, so they see only their own branch.
+const seedExplore = seedAgents(['Explore'])
+
+check('hook reports a duplicate roster without prescribing an unverified cure', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-smoke-'))
+  try {
+    seedAgents([...ROSTER, 'Explore'])(tmp)
+    const out = execFileSync(process.execPath, [HOOK], {
+      encoding: 'utf8',
+      env: { ...process.env, CLAUDE_CONFIG_DIR: tmp, CLAUDE_PLUGIN_ROOT: root },
+    })
+    const ctx = JSON.parse(out).hookSpecificOutput.additionalContext
+    for (const n of ROSTER) {
+      assert(new RegExp(`\`${n}\``).test(ctx), `duplicate "${n}" must be named in the notice`)
+    }
+    assert(/Agent type not found/.test(ctx), 'the notice must explain the failure mode')
+    // Reporting only: every seeded file must survive byte-for-byte.
+    for (const n of ROSTER) {
+      assert(
+        fs.readFileSync(path.join(tmp, 'agents', `${n}.md`), 'utf8') === '# copy\n',
+        'the hook must never modify or delete a file in the config dir',
+      )
+    }
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true })
+  }
+})
+
+check('hook stays silent about duplicates when the agents dir is clean', () => {
+  const ctx = hookContext({ seed: seedExplore })
+  assert(!/share this plugin's roster names/.test(ctx), 'no duplicates must mean no notice')
+})
+
+check('hook warns when CLAUDE_CODE_SUBAGENT_MODEL overrides the tier pins', () => {
+  const ctx = hookContext({ seed: seedExplore, env: { CLAUDE_CODE_SUBAGENT_MODEL: 'opus' } })
+  assert(/CLAUDE_CODE_SUBAGENT_MODEL=opus/.test(ctx), 'the offending value must be named')
+  assert(/cost tiering is inactive/.test(ctx), 'the consequence must be stated plainly')
+})
+
+check('hook stays silent when CLAUDE_CODE_SUBAGENT_MODEL is inherit or unset', () => {
+  const warned = /overrides the `model:` pin/
+  assert(
+    !warned.test(hookContext({ seed: seedExplore, env: { CLAUDE_CODE_SUBAGENT_MODEL: 'inherit' } })),
+    '`inherit` is equivalent to unset — must not warn',
+  )
+  assert(!warned.test(hookContext({ seed: seedExplore })), 'unset must not warn')
+})
+
+check('hook mentions the Explore override only while the file is absent', () => {
+  const absent = hookContext()
+  assert(/Explore\.md/.test(absent), 'a missing Explore override must be mentioned')
+  assert(/bills at top tier/.test(absent), 'the cost consequence must be stated')
+  assert(!/Explore\.md/.test(hookContext({ seed: seedExplore })), 'an installed override silences it')
+})
+
+check('hook never warns about correct default state', () => {
+  // The design rule this plugin encodes. Spawn depth unset and nesting off are stock
+  // Claude Code defaults AND correct here (the swarm dispatches from the main loop),
+  // so they must not appear as notices — an earlier cut warned about them on every
+  // session for every user. The fact lives in POLICY as a routing rule instead.
+  const ctx = hookContext({ seed: seedExplore })
+  assert(!/setup notices/.test(ctx), 'a correctly configured machine must get zero notices')
+  assert(/can't delegate downward/.test(ctx), 'but the nesting rule must survive in POLICY')
+})
+
+check('injected payload stays within budget', () => {
+  // The guard that matters most. This exists because a previous cut of the hook shipped
+  // notices about correct default state, taking the real-world payload to 2988 bytes —
+  // a permanent per-session tax that no other test would have caught. Ceilings are set
+  // just above the current sizes: tripping this means re-justifying the cost, not
+  // bumping the number reflexively.
+  const quiet = hookContext({ seed: seedExplore }).length
+  const dayOne = hookContext().length // empty config dir — what a new user actually gets
+  assert(quiet <= 2600, `quiet-path payload ${quiet}B exceeds its 2600B budget`)
+  assert(dayOne <= 2900, `day-one payload ${dayOne}B exceeds its 2900B budget`)
+  assert(dayOne > quiet, 'the day-one case must actually include the Explore notice')
+})
+
+check('policy quotes the real ceilings, not the retired invented cap', () => {
+  const ctx = hookContext({ seed: seedExplore })
+  assert(!/Cap at 6|6 concurrent/.test(ctx), 'the invented 6-concurrent cap must be gone')
+  assert(/20 concurrent/.test(ctx), 'the real concurrent ceiling must be stated')
+  assert(/200\/session|200 per session/.test(ctx), 'the real session ceiling must be stated')
+  assert(/exempt/.test(ctx), 'the workflow-agent exemption must be stated')
+})
+
+check('policy carries no per-token dollar figures', () => {
+  const ctx = hookContext({ seed: seedExplore })
+  assert(!/\$\d/.test(ctx), 'dollar figures must not be load-bearing in the injected policy')
+  assert(/haiku < sonnet < opus < fable/.test(ctx), 'the tier ordering must survive')
+})
+
 check('hook still ships the policy when config-dir resolution throws', () => {
   // Regression guard for the fix moving os.homedir()/env resolution inside the
   // install try/catch: force homedir() to throw and confirm the hook does not

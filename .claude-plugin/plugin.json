@@ -1,6 +1,6 @@
 {
   "name": "claude-swarm",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "A cost-tiered multi-agent delegation system for Claude Code: a Fable or Opus master orchestrator fans out a swarm of cheaper, specialized agents only when it pays. Ships six tiered agents, an orchestration skill, and two verify-by-default workflows.",
   "author": {
     "name": "phil9922",

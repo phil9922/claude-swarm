@@ -7,6 +7,84 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html): the git tag
 
 ## [Unreleased]
 
+## [0.1.3] — 2026-07-25
+
+Corrects claims about the harness that were invented or had gone stale, and teaches the
+SessionStart hook to detect the conditions that silently defeat this plugin's design. Every
+behavioural claim here was verified against the Claude Code documentation
+(`sub-agents`, `plugins-reference`, `model-config`) rather than assumed — including against
+this plugin's own workflows, which are not a source of truth about the harness.
+
+### Fixed
+- **The delegation policy advertised a concurrency cap that does not exist.** "Cap at 6
+  concurrent" was invented rather than measured, and it was the only ceiling the routing
+  rules offered — so fan-outs were being sized against a fiction. The real limits are **20
+  concurrent** and **200 per session**, tunable via `CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS`
+  and `CLAUDE_CODE_MAX_SUBAGENTS_PER_SESSION`; past either, the `Agent` tool fails rather
+  than queueing. Agents a workflow spawns with `agent()` are exempt from both, which is a
+  concrete reason to route wide fan-outs through `claude-swarm:survey`/`audit` instead of
+  dispatching by hand. Corrected in both places it appeared: `skills/claude-swarm/SKILL.md`
+  and the hook's injected policy.
+
+### Added
+- **The hook now warns when the plugin's premises don't hold.** Four read-only probes, each
+  one line, each **false on a correctly configured machine** — a clean setup gets the policy
+  and nothing else. Same never-throw contract as before: every probe is individually
+  guarded, so a failing check can never cost you the policy, and nothing is written,
+  created, or deleted.
+  - **Duplicate roster.** Agent files in `~/.claude/agents/` sharing the plugin's roster
+    names are named back to you. These do *not* shadow the plugin's agents — a plugin agent
+    registers under a namespaced identifier (`claude-swarm:scout`) and a user agent under
+    its bare `name` (`scout`), so the two coexist as **different agents**. A policy naming
+    one is then invalid against the other, the `Agent` tool answers
+    `Agent type '<name>' not found`, and the main loop absorbs that error by doing the work
+    itself — indistinguishable, from outside, from the swarm refusing to spawn. The notice
+    describes the conflict rather than prescribing a fix: *why* the registered set differs
+    between sessions is not yet understood, and promising a cure would overclaim.
+  - **`CLAUDE_CODE_SUBAGENT_MODEL`** set to anything other than `inherit`: it sits *above*
+    frontmatter in the model resolution order, so it silently voids every tier pin in
+    `agents/` and cost tiering stops working.
+  - **Missing `Explore` override** (below), and **stale workflow copies** from ≤0.1.1.
+- **A payload budget test.** `test/smoke.js` now pins the injected context size. The hook's
+  output is billed every session forever, so growth needs to be deliberate; this makes an
+  accidental increase a test failure instead of an invisible cost.
+- **README: a post-install step to keep `Explore` cheap.** Since Claude Code v2.1.198 the
+  built-in `Explore` agent inherits the main conversation's model rather than always running
+  Haiku — and `Explore` is typically the most-spawned agent in a session, so ambient
+  exploration now bills at your top tier. Only a **user or project** agent named `Explore`
+  overrides the built-in; a plugin cannot supply one, because plugin agents register
+  namespaced and rank lowest in scope precedence. Hence a documented one-file step rather
+  than a seventh agent in `agents/`, with `CLAUDE_CODE_DISABLE_EXPLORE_PLAN_AGENTS` noted as
+  the alternative.
+- **`SKILL.md`: when to prefer a fork over `tracer`.** A fork inherits the parent's system
+  prompt and tool definitions unchanged, so it reuses the parent's prompt cache and skips
+  both subagent tool filters. Prefer it when the task needs context already loaded; prefer
+  `claude-swarm:tracer` for bulk reading of files not yet in context. A fork is a cache-warm
+  shortcut, not a cheaper tier — it runs at the parent's model and counts against the
+  session budget.
+- **Nesting is documented.** Subagents cannot spawn subagents by default, so every agent is
+  dispatched from the main loop. Stated once as a routing rule in the policy and expanded in
+  `SKILL.md`.
+
+### Changed
+- **Per-token dollar figures removed from the routing prose.** The `$10/$50 vs $5/$25` and
+  Sonnet-introductory-pricing figures in the README, `SKILL.md`, and the injected policy were
+  only ever illustrative, but they read as load-bearing: on a subscription plan there is no
+  per-token price to reason about, and on API billing the published rates move. The tier
+  *ordering* — `haiku < sonnet < opus < fable` — is what the routing actually depends on and
+  is all that remains. Fable stays opt-in as the top of that ladder.
+- **Cost prose now accounts for extended thinking.** As of v2.1.198 subagents inherit the
+  main conversation's extended thinking configuration; previously they ran with it off
+  unconditionally. Same roster, same task, more tokens — and turning thinking down in the
+  main session turns it down for the whole swarm.
+
+### Note on measurement
+Earlier benchmarking suggested the swarm rarely self-delegates and that the injected policy
+is therefore mostly wasted. That result is **not** treated as established here: it was
+collected while the roster-name conflict above was live, so delegation would have failed
+regardless, and the harness loaded the plugin from the install cache rather than the working
+tree. The policy has not yet been measured under conditions where it could have worked.
+
 ## [0.1.2] — 2026-07-24
 
 ### Changed
@@ -80,7 +158,8 @@ Initial release.
 - **Smoke test and GitHub Actions CI** — static validation of the manifests,
   runtime checks of the hook contract, and compile checks of the workflow scripts.
 
-[Unreleased]: https://github.com/phil9922/claude-swarm/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/phil9922/claude-swarm/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/phil9922/claude-swarm/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/phil9922/claude-swarm/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/phil9922/claude-swarm/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/phil9922/claude-swarm/releases/tag/v0.1.0
