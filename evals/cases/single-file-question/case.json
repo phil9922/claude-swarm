@@ -1,0 +1,8 @@
+{
+  "name": "single-file-question",
+  "description": "One question answerable from ~110 lines in a single read. The control: fan-out is expected to LOSE here, because spawning an agent to read one short file costs more than reading it.",
+  "expect": "solo-wins",
+  "maxTurns": 15,
+  "timeoutSeconds": 300,
+  "files": ["hooks/session-start.js"]
+}

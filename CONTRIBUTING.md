@@ -40,6 +40,12 @@ every push and pull request — **keep it green.** Requires `node` on your `PATH
 - **The delegation policy** — the compact version injected each session lives in
   `hooks/session-start.js`; the full playbook is `skills/claude-swarm/SKILL.md`.
   Keep them consistent when you change routing rules.
+- **Measuring the claim** — `evals/` runs the same task with the plugin, without it, and
+  with delegation denied outright, and reports what each actually cost:
+  `node evals/run.js` (see `evals/README.md`). Runs spend real money and the runner
+  enforces a ceiling. If you change the roster, the tiers, or the delegation policy,
+  re-measure rather than assuming the argument still holds. Note the suite deliberately
+  includes a case the swarm is *expected to lose* — do not "fix" it.
 - **Model pricing** — `PRICES` in `lib/tally.js` is the only machine-readable copy;
   the rest is prose in the README, the injected policy, and the skill. If rates
   change, all four move together. Rates carry their own validation story: check any

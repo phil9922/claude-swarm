@@ -1,0 +1,8 @@
+{
+  "name": "multi-file-audit",
+  "description": "Audit the repository's JavaScript for correctness bugs, with the file set left for the agent to discover. Open-scope and parallelisable — the 'find every X' shape the delegation policy calls a swarm task. Deliberately NOT a fixed short file list: four named files fit comfortably in one context, and Opus correctly declines to delegate for them.",
+  "expect": "swarm-wins",
+  "maxTurns": 80,
+  "timeoutSeconds": 1200,
+  "files": ["lib/", "hooks/", "workflows/", "test/", "evals/"]
+}
