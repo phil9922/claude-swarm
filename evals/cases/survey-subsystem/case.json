@@ -1,0 +1,11 @@
+{
+  "name": "survey-subsystem",
+  "description": "Map an unfamiliar subsystem end to end. The plugin's actual high-value path: the with arm is told to invoke claude-swarm:survey, while the other arms do the same job by hand. This is the case that tests the roster rather than the cost of carrying it — the other two cases showed Opus never fans out on its own.",
+  "expect": "swarm-wins",
+  "maxTurns": 80,
+  "timeoutSeconds": 1200,
+  "files": ["lib/tally.js", "hooks/session-start.js", "commands/savings.md", "test/smoke.js"],
+  "armPrompts": {
+    "with": "\nUse the `claude-swarm:survey` workflow to do this. Invoke it with `Workflow({name: 'claude-swarm:survey', args: {question: '<the question above>', angles: ['the tally and its pricing', 'the hook and the state files', 'the command and the tests']}})`, then write the final map yourself from what it returns.\n"
+  }
+}

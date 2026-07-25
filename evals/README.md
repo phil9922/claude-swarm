@@ -34,9 +34,29 @@ effort, same allowed tools, same prompt, same working directory.
   file costs more than reading it. The README says as much: fan-out buys speed and
   coverage, not savings, and on small sequential work it is pure overhead.
 
+- **`survey-subsystem`** — map the savings counter end to end. The `with` arm is told to
+  invoke `claude-swarm:survey`; the other arms do the same job by hand.
+
 That second case is not padding. A benchmark that can only produce a favourable result is
 marketing. If the control ever starts favouring the swarm, distrust the harness before
 believing the number — and do not "fix" the case to make it win.
+
+### Why the third case exists, and why it breaks a rule
+
+The first two cases produced an unexpected result: **the swarm never delegated.** Not once,
+in any run, in either case — with the plugin loaded, the roster offered and the `Task` tool
+available. Opus read the files itself every time. So those cases measure the cost of
+*carrying* the plugin (~1,600 tokens of policy and roster per session), not the benefit of
+using it.
+
+`survey-subsystem` tests the roster instead, by invoking it explicitly — which is how the
+delegated spend in a real project actually accumulates. It is the only case where the
+prompts **differ by arm**: `without` and `solo` cannot be asked to run a workflow they do
+not have, so the `with` arm carries one extra instruction. The graded deliverable is
+identical; only the route to it differs, and that route is the intervention.
+
+This is a deliberate, documented exception to the same-prompt rule. The runner prints a
+warning for any case that uses it, so the result cannot be quietly read as like-for-like.
 
 ## Running it
 

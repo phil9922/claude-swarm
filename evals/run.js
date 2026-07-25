@@ -162,11 +162,29 @@ function spawnedAgents(workdir, sessionId) {
   return Object.fromEntries(found)
 }
 
+/**
+ * The prompt an arm actually receives.
+ *
+ * Normally identical across arms — that is what makes the comparison fair. The
+ * exception is a case that tests an explicitly-invoked workflow: `without` and
+ * `solo` cannot be asked to run a workflow they do not have, so the `with` arm
+ * gets an extra instruction telling it to use one. The graded deliverable stays
+ * the same; only the route to it differs, which IS the intervention under test.
+ *
+ * Any case using this is no longer a like-for-like prompt comparison, so
+ * `promptDiffers` is recorded on every run and surfaced in the report rather
+ * than left for a reader to discover.
+ */
+function promptFor(testCase, arm) {
+  const suffix = (testCase.armPrompts || {})[arm.name]
+  return suffix ? testCase.prompt + suffix : testCase.prompt
+}
+
 function runOnce({ testCase, arm, workdir, opts }) {
   const tools = arm.delegate ? [...BASE_TOOLS, ...DELEGATION_TOOLS] : BASE_TOOLS
   const args = [
     '-p',
-    testCase.prompt,
+    promptFor(testCase, arm),
     '--output-format',
     'json',
     '--model',
@@ -523,7 +541,14 @@ function report(cases, arms, records, spent, stoppedEarly, outDir) {
   for (const c of cases) {
     const s = summary[c.name]
     if (!s || Object.keys(s.arms).length === 0) continue
-    console.log(`\n${c.name}   (expected: ${c.expect})\n`)
+    console.log(`\n${c.name}   (expected: ${c.expect})`)
+    if (c.armPrompts && Object.keys(c.armPrompts).length) {
+      console.log(
+        `  NOTE: prompts differ by arm (${Object.keys(c.armPrompts).join(', ')} carry an extra instruction).\n` +
+          `  Not a like-for-like prompt comparison — the differing instruction is the intervention.`
+      )
+    }
+    console.log()
     console.log(
       '  arm       claude-swarm             answers                  runs   mean cost      range            time   turns  spawns  score'
     )
