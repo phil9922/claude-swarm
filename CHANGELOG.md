@@ -7,6 +7,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html): the git tag
 
 ## [Unreleased]
 
+## [0.1.1] — 2026-07-24
+
 ### Fixed
 - `audit`/`survey`: accept `args` delivered as a JSON-encoded string (how the Workflow
   tool marshals a passed object), not only as a live object. Previously a JSON string was
@@ -56,5 +58,6 @@ Initial release.
 - **Smoke test and GitHub Actions CI** — static validation of the manifests,
   runtime checks of the hook contract, and compile checks of the workflow scripts.
 
-[Unreleased]: https://github.com/phil9922/claude-swarm/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/phil9922/claude-swarm/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/phil9922/claude-swarm/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/phil9922/claude-swarm/releases/tag/v0.1.0
