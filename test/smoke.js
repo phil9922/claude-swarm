@@ -43,6 +43,23 @@ function check(name, fn) {
   }
 }
 
+// Async checks must be awaited before the report runs, or a rejected assertion
+// would be an unhandled rejection and the check would silently "pass".
+const pending = []
+function checkAsync(name, fn) {
+  pending.push(
+    Promise.resolve()
+      .then(fn)
+      .then(
+        () => results.push(['ok', name]),
+        (e) => {
+          failures++
+          results.push(['FAIL', `${name} — ${e.message}`])
+        },
+      ),
+  )
+}
+
 // --- 1. Manifests parse and are well-formed --------------------------------
 
 check('plugin.json is well-formed', () => {
@@ -177,6 +194,135 @@ for (const wf of ['survey.js', 'audit.js']) {
     assert(Array.isArray(meta.phases) && meta.phases.length >= 1, 'meta.phases[] required')
   })
 }
+
+// --- 3b. audit.js verification logic actually runs -------------------------
+
+/**
+ * Execute a workflow body with stubbed runtime globals.
+ *
+ * The checks above only compile the workflows. That leaves the part most worth
+ * guarding — whether a finding is confirmed or refuted — untested. Running the
+ * body against canned agent responses exercises the real control flow.
+ */
+async function runWorkflow(file, { args, onAgent }) {
+  const src = read(`workflows/${file}`).replace(/export\s+const\s+meta/, 'const meta')
+  const body = new AsyncFunction(
+    'args',
+    'agent',
+    'parallel',
+    'pipeline',
+    'log',
+    'phase',
+    'budget',
+    'workflow',
+    src,
+  )
+  const parallel = (thunks) =>
+    Promise.all(
+      thunks.map((t) =>
+        Promise.resolve()
+          .then(() => t())
+          .catch(() => null),
+      ),
+    )
+  const pipeline = (items, ...stages) =>
+    Promise.all(
+      items.map(async (item, i) => {
+        let value = item
+        for (const stage of stages) value = await stage(value, item, i)
+        return value
+      }),
+    )
+  return body(
+    args,
+    onAgent,
+    parallel,
+    pipeline,
+    () => {},
+    () => {},
+    { total: null, spent: () => 0, remaining: () => Infinity },
+    () => {},
+  )
+}
+
+// Two findings per lens: the first survives every skeptic, the second is refuted
+// by the very first one. VOTES defaults to 2, so confirmation needs 2 of 3.
+function auditStub(counts) {
+  return async (prompt, opts) => {
+    if (opts.phase === 'Find') {
+      counts.find++
+      return {
+        findings: [
+          { title: 'real', file: 'a.js:1', claim: 'c', failure: 'f' },
+          { title: 'bogus', file: 'a.js:2', claim: 'c', failure: 'f' },
+        ],
+      }
+    }
+    counts.verify++
+    // Index 0 survives, index 1 is refuted. Later waves only ever see survivors.
+    const n = (prompt.match(/^\[\d+\]/gm) || []).length
+    return {
+      verdicts: Array.from({ length: n }, (_, i) => ({
+        index: i,
+        refuted: n > 1 && i === 1,
+        reason: 'because',
+        tested: true,
+      })),
+    }
+  }
+}
+
+checkAsync('audit confirms survivors and refutes the rest, unchanged by batching', async () => {
+  const counts = { find: 0, verify: 0 }
+  const out = await runWorkflow('audit.js', {
+    args: { target: 't', lenses: [{ key: 'only', lens: 'L' }] },
+    onAgent: auditStub(counts),
+  })
+  assert(out.confirmed.length === 1, `expected 1 confirmed, got ${out.confirmed.length}`)
+  assert(out.confirmed[0].title === 'real', `wrong finding confirmed: ${out.confirmed[0].title}`)
+  assert(out.refutedCount === 1, `expected 1 refuted, got ${out.refutedCount}`)
+  assert(out.unverified.length === 0, 'nothing should be unverified here')
+  // 1 find + wave 1 over the batch + 2 escalation waves over the survivor = 4.
+  // The old shape spawned 1 + 2 findings x 3 skeptics = 7.
+  assert(counts.verify === 3, `expected 3 verifier calls, got ${counts.verify}`)
+})
+
+checkAsync('audit escalates only survivors, so a refuted finding costs one pass', async () => {
+  // Every finding refuted in wave 1: there is nothing to escalate, so the
+  // remaining skeptic waves must not run at all.
+  const counts = { find: 0, verify: 0 }
+  const out = await runWorkflow('audit.js', {
+    args: { target: 't', lenses: [{ key: 'only', lens: 'L' }] },
+    onAgent: async (prompt, opts) => {
+      if (opts.phase === 'Find') {
+        counts.find++
+        return { findings: [{ title: 'bogus', file: 'a.js:1', claim: 'c', failure: 'f' }] }
+      }
+      counts.verify++
+      return { verdicts: [{ index: 0, refuted: true, reason: 'no', tested: false }] }
+    },
+  })
+  assert(out.confirmed.length === 0, 'a refuted finding must not be confirmed')
+  assert(out.refutedCount === 1, `expected 1 refuted, got ${out.refutedCount}`)
+  assert(counts.verify === 1, `escalation must be skipped; expected 1 call, got ${counts.verify}`)
+})
+
+checkAsync('audit still buckets a finding as unverified when its skeptics fail', async () => {
+  // Regression guard for the invariant that a verifier which failed to run is
+  // never scored as a refutation. Batching must not weaken this.
+  const out = await runWorkflow('audit.js', {
+    args: { target: 't', lenses: [{ key: 'only', lens: 'L' }] },
+    onAgent: async (prompt, opts) => {
+      if (opts.phase === 'Find') {
+        return { findings: [{ title: 'orphan', file: 'a.js:1', claim: 'c', failure: 'f' }] }
+      }
+      return null // the skeptic died
+    },
+  })
+  assert(out.unverified.length === 1, `expected 1 unverified, got ${out.unverified.length}`)
+  assert(out.refutedCount === 0, 'a failed skeptic must not count as a refutation')
+  assert(out.confirmed.length === 0, 'a failed skeptic must not confirm either')
+})
 
 // --- 4. Agents and skill have usable frontmatter ---------------------------
 
@@ -585,8 +731,10 @@ check('commands/savings.md has valid frontmatter', () => {
 
 // --- Report ----------------------------------------------------------------
 
-for (const [status, name] of results) {
-  console.log(`${status === 'ok' ? '  ok  ' : ' FAIL '}${name}`)
-}
-console.log(`\n${results.length - failures}/${results.length} checks passed`)
-process.exit(failures ? 1 : 0)
+Promise.all(pending).then(() => {
+  for (const [status, name] of results) {
+    console.log(`${status === 'ok' ? '  ok  ' : ' FAIL '}${name}`)
+  }
+  console.log(`\n${results.length - failures}/${results.length} checks passed`)
+  process.exit(failures ? 1 : 0)
+})

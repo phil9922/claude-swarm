@@ -71,15 +71,41 @@ const FINDINGS = {
   },
 }
 
-const VERDICT = {
+// One verdict per finding in a batch. Batching is the whole point: a skeptic reads
+// the file once and judges every claim against it, instead of one spawn per claim
+// each re-establishing the same context. Context re-establishment was measured at
+// ~34% of this plugin's delegated spend.
+const BATCH_VERDICT = {
   type: 'object',
   additionalProperties: false,
-  required: ['refuted', 'reason', 'tested'],
+  required: ['verdicts'],
   properties: {
-    refuted: { type: 'boolean', description: 'true if the claim does not hold. Default true when genuinely unsure.' },
-    reason: { type: 'string', description: 'the evidence, anchored to what you read or ran' },
-    tested: { type: 'boolean', description: 'true only if you actually executed something rather than reasoning' },
+    verdicts: {
+      type: 'array',
+      description: 'exactly one entry per finding, identified by the [index] it was given',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['index', 'refuted', 'reason', 'tested'],
+        properties: {
+          index: { type: 'integer', description: 'the [index] of the finding this verdict is for' },
+          refuted: { type: 'boolean', description: 'true if the claim does not hold. Default true when genuinely unsure.' },
+          reason: { type: 'string', description: 'the evidence, anchored to what you read or ran' },
+          tested: { type: 'boolean', description: 'true only if you actually executed something rather than reasoning' },
+        },
+      },
+    },
   },
+}
+
+// Findings judged together in one context. Large enough to amortise the read,
+// small enough that no single prompt turns into a wall of unrelated claims.
+const BATCH_LIMIT = 8
+
+function chunk(items, size) {
+  const out = []
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size))
+  return out
 }
 
 const LENSES_OF_DOUBT = [
@@ -96,7 +122,110 @@ const skeptics = Array.from(
   (_, i) => LENSES_OF_DOUBT[i % LENSES_OF_DOUBT.length],
 )
 
-log(`Auditing ${target} across ${lenses.length} lenses, ${VOTES}-vote refutation`)
+/**
+ * One skeptic, one batch of findings, one angle of attack. Returns a map of
+ * finding-index -> verdict. A finding the skeptic does not return a verdict for
+ * is deliberately absent rather than assumed refuted: an agent that failed to
+ * run must never be scored as a refutation.
+ */
+async function judge(batch, doubt, l, wave) {
+  const list = batch
+    .map(
+      (f, i) =>
+        `[${i}] ${f.title}\n    Location: ${f.file}\n    Claim: ${f.claim}\n    Claimed failure: ${f.failure}`,
+    )
+    .join('\n\n')
+
+  const res = await agent(
+    `${batch.length} finding(s) have been reported against the same area. Your job is to REFUTE each one.
+
+${list}
+
+Your angle of attack: ${doubt}
+
+Check the artifact, not the story. Read the actual code once, then judge every finding
+above against what you read. Run the actual case where you can. Default to refuted=true
+for any finding whose claim you genuinely cannot establish — an unproven finding must not
+survive as a confirmed one.
+
+Return exactly one verdict per finding, using the [index] shown above. Judge each finding
+on its own evidence: these are unrelated claims that happen to share a file, so refuting
+one says nothing about the next.`,
+    {
+      agentType: 'claude-swarm:verifier',
+      label: `refute:${l.key}#${wave}`,
+      phase: 'Verify',
+      schema: BATCH_VERDICT,
+    },
+  )
+
+  const byIndex = new Map()
+  for (const v of (res && res.verdicts) || []) {
+    if (Number.isInteger(v.index) && v.index >= 0 && v.index < batch.length) byIndex.set(v.index, v)
+  }
+  return byIndex
+}
+
+/**
+ * Verify a batch, escalating only where it matters.
+ *
+ * Wave 1 sends a single skeptic. A refutation there is terminal — and since
+ * skeptics refute by default when unsure, most weak candidates die in that one
+ * cheap pass. Only survivors face the remaining angles.
+ *
+ * The confirmation threshold is unchanged: a finding still needs to survive
+ * VOTES of VOTES+1 independent attempts. Escalation is skipped only for findings
+ * that already cannot reach it, so this cuts cost without lowering the bar.
+ */
+async function verifyBatch(batch, l) {
+  const first = await judge(batch, skeptics[0], l, 0)
+
+  const state = batch.map((f, i) => {
+    const v = first.get(i)
+    return {
+      f,
+      cast: v ? 1 : 0,
+      survived: v && !v.refuted ? 1 : 0,
+      executed: !!(v && v.tested),
+      verdicts: v ? [{ refuted: v.refuted, reason: v.reason }] : [],
+      alive: !!v && !v.refuted,
+    }
+  })
+
+  const survivors = state.filter((s) => s.alive)
+  const remaining = skeptics.slice(1)
+
+  if (survivors.length && remaining.length) {
+    const subset = survivors.map((s) => s.f)
+    const waves = await parallel(
+      remaining.map((doubt, i) => () => judge(subset, doubt, l, i + 1)),
+    )
+    for (const res of waves.filter(Boolean)) {
+      survivors.forEach((s, i) => {
+        const v = res.get(i)
+        if (!v) return
+        s.cast += 1
+        if (!v.refuted) s.survived += 1
+        if (v.tested) s.executed = true
+        s.verdicts.push({ refuted: v.refuted, reason: v.reason })
+      })
+    }
+  }
+
+  return state.map((s) => ({
+    ...s.f,
+    lens: l.key,
+    survived: s.survived,
+    cast: s.cast,
+    executed: s.executed,
+    verdicts: s.verdicts,
+  }))
+}
+
+log(
+  `Auditing ${target} across ${lenses.length} lenses, ${VOTES}-vote refutation ` +
+    `(batched ${BATCH_LIMIT}/verifier, escalating only survivors)`,
+)
 
 const perLens = await pipeline(
   lenses,
@@ -124,41 +253,14 @@ If the lens finds nothing, return an empty list rather than padding.`,
       log(`  ${l.key}: clean`)
       return []
     }
-    log(`  ${l.key}: ${findings.length} candidate${findings.length === 1 ? '' : 's'} → verifying`)
+    const batches = chunk(findings, BATCH_LIMIT)
+    log(
+      `  ${l.key}: ${findings.length} candidate${findings.length === 1 ? '' : 's'} → verifying ` +
+        `in ${batches.length} batch${batches.length === 1 ? '' : 'es'}`,
+    )
 
-    return parallel(
-      findings.map((f) => () =>
-        parallel(
-          skeptics.map((doubt, i) => () =>
-            agent(
-              `A finding has been reported. Your job is to REFUTE it.
-
-Title: ${f.title}
-Location: ${f.file}
-Claim: ${f.claim}
-Claimed failure: ${f.failure}
-
-Your angle of attack: ${doubt}
-
-Check the artifact, not the story. Read the actual code. Run the actual case where
-you can. Default to refuted=true if you genuinely cannot establish the claim —
-an unproven finding must not survive as a confirmed one.`,
-              { agentType: 'claude-swarm:verifier', label: `refute:${f.title.slice(0, 32)}#${i}`, phase: 'Verify', schema: VERDICT },
-            ),
-          ),
-        ).then((votes) => {
-          const cast = votes.filter(Boolean)
-          const survived = cast.filter((v) => !v.refuted).length
-          return {
-            ...f,
-            lens: l.key,
-            survived,
-            cast: cast.length,
-            executed: cast.some((v) => v.tested),
-            verdicts: cast.map((v) => ({ refuted: v.refuted, reason: v.reason })),
-          }
-        }),
-      ),
+    return parallel(batches.map((batch) => () => verifyBatch(batch, l))).then((groups) =>
+      groups.filter(Boolean).flat(),
     )
   },
 )
@@ -196,7 +298,9 @@ return {
   refutedCount: refuted.length,
   unverified: unverified.map((f) => ({ title: f.title, file: f.file, lens: f.lens })),
   lensesClean: emptyLenses,
-  note: `Findings surviving ${VOTES} of ${VOTES + 1} independent refutation attempts.${
+  note: `Findings surviving ${VOTES} of ${VOTES + 1} independent refutation attempts. A first
+skeptic judges every candidate; only those it fails to refute face the remaining angles, so
+the threshold is unchanged while refuted candidates cost one pass instead of ${VOTES + 1}.${
     unverified.length
       ? ` ${unverified.length} finding(s) could not be verified (all skeptics failed) and are reported separately, not as refuted.`
       : ''
