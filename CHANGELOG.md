@@ -7,6 +7,31 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html): the git tag
 
 ## [Unreleased]
 
+## [0.1.4] — 2026-07-25
+
+Cuts the cost of the `audit` workflow without moving its confirmation bar, and stops the
+delegation policy from asserting a concurrency figure it cannot keep true.
+
+### Changed
+- **`claude-swarm:audit` batches verification instead of spawning one agent per claim.**
+  The old shape was `findings × (VOTES + 1)` spawns, each re-establishing context to judge
+  a single finding; on this project it was 86% of delegated spend across 114 verifier
+  spawns, a third of it cache writes alone. A skeptic now reads once and returns a verdict
+  per finding, up to 8 per batch. Escalation is adaptive: wave 1 sends a single skeptic
+  over the whole batch, and because skeptics refute by default when unsure, most weak
+  candidates die in that one cheap pass — only survivors face the remaining angles.
+  **The confirmation threshold is unchanged.** A finding still has to survive `VOTES` of
+  `VOTES + 1` independent attempts, and escalation is skipped only where it could not
+  change the outcome. The invariant that a skeptic which *failed to run* is bucketed
+  `unverified` rather than refuted is preserved, and is now covered by a test.
+  Roughly 80–87% fewer verifier agents on representative shapes — a figure from the
+  stubbed tests, not from a live run.
+- **Workflows are now executed by the test suite, not merely compiled.** The confirm/refute
+  logic had no runtime coverage; three checks run `workflows/audit.js` against stubbed
+  agents and assert both the outcomes and the verifier call counts. This needed an
+  async-aware `check()` — the previous one would have let a rejected assertion pass
+  silently.
+
 ### Fixed
 - **The delegation policy no longer quotes any concurrency figure.** 0.1.3 replaced the
   invented "cap at 6" with 20 concurrent / 200 per session. Those numbers were right —
@@ -178,7 +203,8 @@ Initial release.
 - **Smoke test and GitHub Actions CI** — static validation of the manifests,
   runtime checks of the hook contract, and compile checks of the workflow scripts.
 
-[Unreleased]: https://github.com/phil9922/claude-swarm/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/phil9922/claude-swarm/compare/v0.1.4...HEAD
+[0.1.4]: https://github.com/phil9922/claude-swarm/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/phil9922/claude-swarm/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/phil9922/claude-swarm/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/phil9922/claude-swarm/compare/v0.1.0...v0.1.1
