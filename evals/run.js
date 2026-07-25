@@ -359,6 +359,24 @@ function preflight(arms, workdir) {
   return ok
 }
 
+/**
+ * How an arm reads in a results table: whether claude-swarm was enabled, and —
+ * for the arm where it matters — that delegation itself was denied. `without`
+ * and `solo` are both plugin-disabled, so "disabled" alone understates the
+ * difference between them.
+ */
+function armPluginState(arm) {
+  if (arm.name === 'with') return 'enabled'
+  return arm.delegate ? 'disabled' : 'disabled, no delegation'
+}
+
+/** Why each arm exists, so a results table can be read without the README. */
+const ARM_QUESTION = {
+  with: 'status quo',
+  without: 'vs stock Claude Code',
+  solo: 'the savings assumption',
+}
+
 function money(n) {
   return '$' + Number(n).toFixed(4)
 }
@@ -506,12 +524,19 @@ function report(cases, arms, records, spent, stoppedEarly, outDir) {
     const s = summary[c.name]
     if (!s || Object.keys(s.arms).length === 0) continue
     console.log(`\n${c.name}   (expected: ${c.expect})\n`)
-    console.log('  arm       runs   mean cost      range            time   turns  spawns  score')
+    console.log(
+      '  arm       claude-swarm             answers                  runs   mean cost      range            time   turns  spawns  score'
+    )
     for (const a of arms) {
       const m = s.arms[a.name]
       if (!m) continue
+      // Spell out what each arm switched off and why it exists. "without" and
+      // "solo" are both plugin-disabled and differ only in whether Claude Code's
+      // own built-in subagents stayed reachable — which the arm name alone hides.
+      const pluginState = armPluginState(a)
+      const answers = ARM_QUESTION[a.name] || ''
       console.log(
-        `  ${a.name.padEnd(9)} ${String(m.runs).padStart(4)}   ${money(m.meanCost).padStart(9)}  ` +
+        `  ${a.name.padEnd(9)} ${pluginState.padEnd(24)} ${answers.padEnd(24)} ${String(m.runs).padStart(4)}   ${money(m.meanCost).padStart(9)}  ` +
           `${(money(m.minCost) + '–' + money(m.maxCost)).padStart(19)}  ` +
           `${m.meanDurationS.toFixed(0).padStart(4)}s  ${m.meanTurns.toFixed(1).padStart(5)}  ` +
           `${m.meanSpawns.toFixed(1).padStart(6)}  ${m.meanScore == null ? '  —' : m.meanScore.toFixed(2)}`
