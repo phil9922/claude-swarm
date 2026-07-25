@@ -8,7 +8,7 @@ and with delegation denied outright.
 
 | arm | claude-swarm | Subagents | Answers |
 |---|---|---|---|
-| `with` | enabled | roster + built-ins | The status quo |
+| `with` | enabled, **from this working tree** | roster + built-ins | The status quo |
 | `without` | disabled | Claude Code's built-ins only | What the plugin adds over stock Claude Code |
 | `solo` | disabled | none (`Task` denied) | One Opus context doing everything |
 
@@ -16,9 +16,27 @@ and with delegation denied outright.
 take Claude Code's own `Explore`/`general-purpose` agents away with it. `with` vs `solo`
 isolates delegation itself.
 
-Arms differ **only** in the settings file and whether `Task` is denied. Same model, same
-effort, same allowed tools, same working directory — and, except where noted below, the
-same prompt.
+Arms differ **only** in `--plugin-dir` and whether `Task` is denied. Same settings file,
+same model, same effort, same allowed tools, same working directory — and, except where
+noted below, the same prompt.
+
+## Which copy of the plugin is under test
+
+**The working tree, not the version installed on your machine.** Every arm starts from a
+settings file that disables all installed plugins; the `with` arm then loads this
+repository for that session only, via `--plugin-dir`. Edit `workflows/`, `agents/` or the
+`SessionStart` hook and the next run measures the edit — no reinstall, and never two copies
+of the plugin loaded at once.
+
+This was not true at first, and the mistake was expensive. The runner enabled the installed
+marketplace plugin through settings, so a batch of numbers described the released `0.1.2`
+while the changes they were meant to evaluate sat unmeasured in the working tree.
+`preflight` now asserts the loaded plugin's **path**, because "a plugin named claude-swarm
+is loaded" says nothing about which claude-swarm.
+
+`--plugin-dir PATH` overrides the source, but preflight still demands the working tree, so
+pointing it anywhere else **fails the run** rather than quietly measuring something else. A
+deliberate off-tree run needs `--skip-preflight`.
 
 ## The cases
 
@@ -57,6 +75,8 @@ node evals/run.js --case audit    # filter cases by substring
 node evals/run.js --runs 1        # fewer repetitions
 node evals/run.js --max-cost 5    # lower the ceiling (default 15)
 node evals/run.js --grade         # add LLM grading of output quality
+node evals/run.js --arms with     # one arm only — iterating on the plugin
+node evals/run.js --runs 0        # preflight only, spends nothing
 ```
 
 Runs spend real money. The runner checks cumulative cost after every run and stops before
@@ -79,9 +99,12 @@ Three things to look at before trusting any average:
   hint, not a measurement — and one run is an anecdote.
 
 `preflight` runs before any budget is spent and asserts that the arms differ the way they
-claim to: the plugin loaded in `with` and absent elsewhere, and the delegation tool present
-under the name being passed. Both of those have failed silently before; a run that produces
-plausible numbers from a broken configuration is worse than one that refuses to start.
+claim to: the plugin loaded in `with` and absent elsewhere, the loaded plugin's path being
+this repository, and the delegation tool present under the name being passed. All three
+have failed silently before; a run that produces plausible numbers from a broken
+configuration is worse than one that refuses to start. It prints the loaded plugin's path,
+version and source on every run, so the copy under test is never something you have to
+infer.
 
 Runs execute in a temp working directory with `--add-dir` granting access to the repo, so
 their transcripts stay out of this project's own history.

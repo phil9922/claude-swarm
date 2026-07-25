@@ -10,8 +10,16 @@
  *   solo     plugin disabled AND the Task tool denied, so one Opus context does
  *            everything. This isolates delegation itself.
  *
- * Arms differ ONLY in the settings file and whether Task is denied. Same model,
- * same effort, same allowed tools, same prompt, same working directory.
+ * The `with` arm loads THIS WORKING TREE, not whatever copy of claude-swarm is
+ * installed on the machine. Every arm starts from a settings file that disables
+ * all installed plugins; `with` then adds the repo back with --plugin-dir. Local
+ * plugin edits are therefore visible to the benchmark immediately, and two
+ * copies of the plugin can never be loaded at once. preflight() asserts the
+ * loaded plugin's PATH, because an earlier version of this runner enabled the
+ * marketplace copy through settings and spent real money measuring it.
+ *
+ * Arms differ ONLY in --plugin-dir and whether Task is denied. Same settings,
+ * same model, same effort, same allowed tools, same prompt, same directory.
  *
  * Cost comes from Claude Code's own `total_cost_usd`, which is a process-global
  * accumulator that subagent calls feed into — so it covers Task-tool spend, not
@@ -53,14 +61,31 @@ const ARMS_DIR = path.join(__dirname, 'arms')
 const BASE_TOOLS = ['Read', 'Glob', 'Grep']
 const DELEGATION_TOOLS = ['Task', 'Workflow']
 
+// `settings` is the same file for every arm — it disables every installed
+// plugin, so no arm inherits whatever happens to be installed on this machine.
+// `pluginDir` is what makes an arm a swarm arm: the working tree, loaded for
+// that session only.
+const SETTINGS = 'plugins-off.json'
 const ARMS = [
-  { name: 'with', settings: 'with.json', delegate: true },
-  { name: 'without', settings: 'without.json', delegate: true },
-  { name: 'solo', settings: 'without.json', delegate: false },
+  { name: 'with', settings: SETTINGS, delegate: true, pluginDir: REPO },
+  { name: 'without', settings: SETTINGS, delegate: true, pluginDir: null },
+  { name: 'solo', settings: SETTINGS, delegate: false, pluginDir: null },
 ]
 
 function parseArgs(argv) {
-  const opts = { runs: 3, maxCost: 15, caseFilter: null, arms: null, grade: false, model: 'opus', effort: 'high' }
+  const opts = {
+    runs: 3,
+    maxCost: 15,
+    caseFilter: null,
+    arms: null,
+    grade: false,
+    model: 'opus',
+    effort: 'high',
+    // Which copy of the plugin the `with` arm loads. Defaults to the working
+    // tree; overridable so the path guard can be proved to fail (point it at
+    // the installed cache and preflight must refuse to run).
+    pluginDir: REPO,
+  }
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
     if (a === '--runs') opts.runs = Number(argv[++i])
@@ -70,8 +95,12 @@ function parseArgs(argv) {
     else if (a === '--grade') opts.grade = true
     else if (a === '--model') opts.model = argv[++i]
     else if (a === '--effort') opts.effort = argv[++i]
+    else if (a === '--plugin-dir') opts.pluginDir = argv[++i]
     else if (a === '--help' || a === '-h') {
-      console.log('usage: node evals/run.js [--runs N] [--max-cost USD] [--case substr] [--arms with,without,solo] [--grade]')
+      console.log(
+        'usage: node evals/run.js [--runs N] [--max-cost USD] [--case substr] ' +
+          '[--arms with,without,solo] [--grade] [--plugin-dir PATH]'
+      )
       process.exit(0)
     }
   }
@@ -92,6 +121,20 @@ function loadCases(filter) {
       }
     })
     .filter((c) => !filter || c.name.includes(filter))
+}
+
+/**
+ * Canonical form of a path, for comparing what the runtime says it loaded
+ * against what we asked it to load. Falls back to the resolved path when the
+ * target does not exist, so a bad --plugin-dir still produces a readable
+ * mismatch message rather than throwing out of preflight.
+ */
+function realpath(p) {
+  try {
+    return fs.realpathSync(p)
+  } catch (_) {
+    return path.resolve(p)
+  }
 }
 
 /** Claude Code's project-directory slug for a working directory. */
@@ -191,6 +234,7 @@ function runOnce({ testCase, arm, workdir, opts }) {
     opts.effort,
     '--settings',
     path.join(ARMS_DIR, arm.settings),
+    ...(arm.pluginDir ? ['--plugin-dir', arm.pluginDir] : []),
     '--add-dir',
     REPO,
     '--allowedTools',
@@ -264,7 +308,7 @@ function grade(testCase, output, workdir) {
       '--model',
       'haiku',
       '--settings',
-      path.join(ARMS_DIR, 'without.json'),
+      path.join(ARMS_DIR, SETTINGS),
       '--allowedTools',
       'Read',
       '--max-turns',
@@ -298,11 +342,18 @@ function grade(testCase, output, workdir) {
  *
  *   - the delegation tool really exists under the name we pass,
  *   - the plugin is loaded in `with` and absent in `without`/`solo`,
+ *   - the loaded plugin is THIS REPOSITORY and not some other copy,
  *   - the roster agents are actually offered in `with`.
  *
  * Every one of these has already failed silently once during development. A run
  * that produces plausible numbers from a broken configuration is worse than a
  * run that refuses to start.
+ *
+ * The path check is the newest and was the most expensive to learn: the runner
+ * previously enabled the installed marketplace plugin through settings, so the
+ * name check passed while every number described the released version rather
+ * than the working tree. Checking a plugin named claude-swarm is loaded says
+ * nothing about WHICH claude-swarm.
  */
 function preflight(arms, workdir) {
   console.log('preflight:')
@@ -320,6 +371,7 @@ function preflight(arms, workdir) {
         'haiku',
         '--settings',
         path.join(ARMS_DIR, arm.settings),
+        ...(arm.pluginDir ? ['--plugin-dir', arm.pluginDir] : []),
         '--max-turns',
         '1',
       ],
@@ -354,22 +406,38 @@ function preflight(arms, workdir) {
 
     const tools = init.tools || []
     const agents = init.agents || []
-    const plugins = (init.plugins || []).map((p) => p.name)
-    const hasPlugin = plugins.includes('claude-swarm')
+    const swarm = (init.plugins || []).find((p) => p.name === 'claude-swarm')
+    const hasPlugin = Boolean(swarm)
     const hasRoster = agents.some((a) => a.startsWith('claude-swarm:'))
     const missingTools = DELEGATION_TOOLS.filter((t) => !tools.includes(t))
+    // fs.realpathSync so a symlinked repo or /tmp path still compares equal.
+    //
+    // The expected path is REPO — deliberately NOT arm.pluginDir. Comparing the
+    // loaded path against whatever we asked for would make this guard
+    // unfalsifiable: point --plugin-dir at the installed cache and both sides
+    // move together, so the check passes while the benchmark measures the wrong
+    // code. That is the exact bug this check exists to catch. An intentional
+    // off-tree run is still possible, loudly, via --skip-preflight.
+    const loadedPath = swarm && swarm.path ? realpath(swarm.path) : null
 
     const problems = []
     if (missingTools.length) problems.push(`delegation tool(s) not in runtime tool list: ${missingTools.join(', ')}`)
-    if (arm.name === 'with' && !hasPlugin) problems.push('plugin NOT loaded in the with arm')
-    if (arm.name === 'with' && !hasRoster) problems.push('roster agents not offered in the with arm')
-    if (arm.name !== 'with' && hasPlugin) problems.push('plugin IS loaded in a no-plugin arm')
+    if (arm.pluginDir && !hasPlugin) problems.push('plugin NOT loaded in the with arm')
+    if (arm.pluginDir && !hasRoster) problems.push('roster agents not offered in the with arm')
+    if (arm.pluginDir && hasPlugin && loadedPath !== realpath(REPO)) {
+      problems.push(
+        `loaded plugin is ${loadedPath || '(no path reported)'}, not the working tree ${realpath(REPO)} — ` +
+          `results would describe a different copy of the plugin`
+      )
+    }
+    if (!arm.pluginDir && hasPlugin) problems.push(`plugin IS loaded in a no-plugin arm (from ${loadedPath})`)
 
     if (problems.length) ok = false
     console.log(
       `  ${arm.name.padEnd(9)} plugin=${hasPlugin ? 'yes' : 'no '}  roster=${hasRoster ? 'yes' : 'no '}  ` +
         `delegation=${missingTools.length ? 'MISSING' : 'ok'}  ${problems.length ? '✗ ' + problems.join('; ') : '✓'}`
     )
+    if (hasPlugin) console.log(`            plugin path: ${loadedPath}  (v${swarm.version || '?'}, ${swarm.source || '?'})`)
   }
   console.log()
   return ok
@@ -382,7 +450,7 @@ function preflight(arms, workdir) {
  * difference between them.
  */
 function armPluginState(arm) {
-  if (arm.name === 'with') return 'enabled'
+  if (arm.pluginDir) return 'enabled (working tree)'
   return arm.delegate ? 'disabled' : 'disabled, no delegation'
 }
 
@@ -403,7 +471,9 @@ function mean(xs) {
 
 function main() {
   const opts = parseArgs(process.argv.slice(2))
-  const arms = opts.arms ? ARMS.filter((a) => opts.arms.includes(a.name)) : ARMS
+  const arms = (opts.arms ? ARMS.filter((a) => opts.arms.includes(a.name)) : ARMS).map((a) =>
+    a.pluginDir ? { ...a, pluginDir: opts.pluginDir } : a
+  )
   const cases = loadCases(opts.caseFilter)
   if (cases.length === 0) {
     console.error('no cases matched')
@@ -423,6 +493,7 @@ function main() {
   console.log(`  arms:     ${arms.map((a) => a.name).join(', ')}`)
   console.log(`  runs:     ${opts.runs} per arm`)
   console.log(`  model:    ${opts.model} (effort ${opts.effort})`)
+  console.log(`  plugin:   ${opts.pluginDir}${opts.pluginDir === REPO ? ' (working tree)' : '  ⚠ NOT the working tree'}`)
   console.log(`  ceiling:  $${opts.maxCost}`)
   console.log(`  workdir:  ${workdir}`)
   console.log(`  results:  ${outDir}\n`)
