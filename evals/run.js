@@ -8,25 +8,23 @@
  *   without  plugin disabled — stock Claude Code, which still has its own
  *            Explore/general-purpose subagents
  *   solo     plugin disabled AND the Task tool denied, so one Opus context does
- *            everything. This is the arm the savings counter implicitly assumes.
+ *            everything. This isolates delegation itself.
  *
  * Arms differ ONLY in the settings file and whether Task is denied. Same model,
  * same effort, same allowed tools, same prompt, same working directory.
  *
  * Cost comes from Claude Code's own `total_cost_usd`, which is a process-global
  * accumulator that subagent calls feed into — so it covers Task-tool spend, not
- * just the main loop. We do not compute it ourselves (though lib/tally.js
- * reproduces it to the cent, which is how that pricing table was validated).
+ * just the main loop. We do not compute it ourselves.
  *
  * Two things this runner is careful about:
  *
  *   1. Budget. Every run spends real money, so cumulative cost is checked before
  *      each run and the suite stops rather than starting one that could breach
  *      the ceiling.
- *   2. Contamination. Runs execute in a throwaway working directory with
- *      --add-dir granting access to the repo, so their subagent transcripts land
- *      under a scratch project slug instead of inflating this project's
- *      /claude-swarm:savings totals — the very number the benchmark exists to check.
+ *   2. Isolation. Runs execute in a throwaway working directory with --add-dir
+ *      granting access to the repo, so their transcripts land under a scratch
+ *      project slug rather than in this project's history.
  */
 
 'use strict'
@@ -392,7 +390,7 @@ function armPluginState(arm) {
 const ARM_QUESTION = {
   with: 'status quo',
   without: 'vs stock Claude Code',
-  solo: 'the savings assumption',
+  solo: 'delegation isolated',
 }
 
 function money(n) {
@@ -417,7 +415,7 @@ function main() {
   fs.mkdirSync(outDir, { recursive: true })
 
   // Runs execute here, NOT in the repo, so their transcripts do not pollute this
-  // project's savings tally. --add-dir still grants read access to the repo.
+  // project history. --add-dir still grants read access to the repo.
   const workdir = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-bench-'))
 
   console.log(`claude-swarm benchmark`)
@@ -522,6 +520,9 @@ function summarize(cases, arms, records) {
         minCost: Math.min(...costs),
         maxCost: Math.max(...costs),
         meanDurationS: mean(rs.map((r) => r.durationMs)) / 1000,
+        totalDurationS: rs.reduce((a, r) => a + r.durationMs, 0) / 1000,
+        minDurationS: Math.min(...rs.map((r) => r.durationMs)) / 1000,
+        maxDurationS: Math.max(...rs.map((r) => r.durationMs)) / 1000,
         meanTurns: mean(rs.map((r) => r.turns)),
         meanSpawns: mean(rs.map((r) => r.spawns)),
         zeroSpawnRuns: rs.filter((r) => r.spawns === 0).length,
@@ -550,7 +551,7 @@ function report(cases, arms, records, spent, stoppedEarly, outDir) {
     }
     console.log()
     console.log(
-      '  arm       claude-swarm             answers                  runs   mean cost      range            time   turns  spawns  score'
+      '  arm       claude-swarm             answers                  runs   mean cost      range            mean t   total t  turns  spawns  score'
     )
     for (const a of arms) {
       const m = s.arms[a.name]
@@ -563,7 +564,8 @@ function report(cases, arms, records, spent, stoppedEarly, outDir) {
       console.log(
         `  ${a.name.padEnd(9)} ${pluginState.padEnd(24)} ${answers.padEnd(24)} ${String(m.runs).padStart(4)}   ${money(m.meanCost).padStart(9)}  ` +
           `${(money(m.minCost) + '–' + money(m.maxCost)).padStart(19)}  ` +
-          `${m.meanDurationS.toFixed(0).padStart(4)}s  ${m.meanTurns.toFixed(1).padStart(5)}  ` +
+          `${(m.meanDurationS.toFixed(0) + 's').padStart(6)}  ${(m.totalDurationS.toFixed(0) + 's').padStart(8)}  ` +
+          `${m.meanTurns.toFixed(1).padStart(5)}  ` +
           `${m.meanSpawns.toFixed(1).padStart(6)}  ${m.meanScore == null ? '  —' : m.meanScore.toFixed(2)}`
       )
       if (a.name === 'with' && m.zeroSpawnRuns > 0) {

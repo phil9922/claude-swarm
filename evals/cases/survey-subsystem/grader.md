@@ -1,35 +1,35 @@
 You are grading a written map of a subsystem. Score 0.0–1.0 on how much a new maintainer
 could act on without reading the code themselves.
 
-The task was to map the claude-swarm savings counter across five points: what computes the
-number, how cost is derived, where state lives, how it reaches the user, and what the
-number does not mean.
+The task was to map the claude-swarm `audit` workflow across five points: the find stage,
+the verify stage, the confirmation rule, the failure modes it guards against, and where
+the tests exercise it.
 
 The ground truth, for checking accuracy:
 
-- **`lib/tally.js`** does the tallying. It walks subagent transcripts under
-  `<sessionId>/subagents/` (Workflow-spawned ones nested deeper), dedups assistant entries
-  by `message.id` because they are split per content block with cumulative usage, and
-  counts only the cheaper-tier roster agents — scout, tracer, mechanic, verifier, scribe.
-  `implementer` is excluded because it runs on Opus and has no tier delta.
-- **Pricing** is the `PRICES` table. Cache reads bill at 0.1x input; cache writes at 1.25x
-  for the 5-minute TTL and 2x for the 1-hour one. Turns are priced by their own timestamp,
-  so Sonnet 5's introductory rate lapsing on 2026-08-31 is handled. Unpriced models are
-  reported rather than guessed at.
-- **State**: two files under the config dir's `claude-swarm/` — `usage.json`, a small
-  summary the hook reads, and `usage-cache.json`, per-file watermarks keyed on size and
-  mtime so unchanged transcripts are not re-parsed. Projects with no delegated work are
-  omitted from the summary.
-- **Surfaces**: the `/claude-swarm:savings` command does the scanning and refreshes both
-  files; the SessionStart hook only does one small read of the summary and never writes,
-  so its line is as fresh as the last command run and states its own age.
-- **The caveat**: the figure is an upper bound. It prices tokens the swarm actually spent
-  at Opus rates, and a solo run would have spent fewer.
+- **Find stage** (`workflows/audit.js`) — the target comes from a string arg or
+  `input.target`; args arrive JSON-encoded and are normalised at the top of the script. An
+  empty `lenses` array falls back to the six defaults rather than producing a false-clean
+  audit. One `claude-swarm:tracer` reads per lens, in parallel, returning candidate
+  findings against a schema.
+- **Verify stage** — findings are batched (up to 8) and judged by `claude-swarm:verifier`
+  agents that refute by default. A first skeptic judges the whole batch; only findings it
+  fails to refute are escalated to the remaining doubt angles. Skeptics come from a pool of
+  three angles, cycled to `votes + 1` so a higher `votes` raises scrutiny rather than making
+  confirmation impossible.
+- **Confirmation rule** — a finding is confirmed when it survives at least `VOTES` of
+  `VOTES + 1` independent refutation attempts. `votes` is validated explicitly: an intentional
+  `0` is honoured, and invalid values coerce to the default with a log rather than silently.
+- **Failure modes** — a finding whose skeptics all failed to run is bucketed `unverified`,
+  never counted as refuted, so a transient outage cannot masquerade as a refutation. A
+  finding with no verdict in its batch is likewise absent rather than assumed refuted.
+- **Tests** (`test/smoke.js`) — the workflow bodies are compiled, and the audit
+  confirm/refute logic is executed against stubbed agents, asserting both the outcomes and
+  the number of verifier calls.
 
 Scoring:
 
-- **Coverage** — how many of the five points are genuinely addressed. A map that covers
-  three well and ignores two is incomplete.
+- **Coverage** — how many of the five points are genuinely addressed.
 - **Accuracy** — claims must match the ground truth above. Penalise confident wrong
   statements harder than omissions; a wrong map is worse than a thin one.
 - **Specificity** — names files and functions and states conditions, rather than
@@ -38,8 +38,9 @@ Scoring:
 Do not reward length or structure for their own sake. A tight accurate map beats a long
 vague one. Do not reward the answer for describing its own process or what tools it used.
 
-Getting the dedup-by-message.id detail, the cache-write TTL split, or the upper-bound
-caveat right are strong signals the subsystem was actually read rather than guessed at.
+Getting the batching-and-escalation shape, the `VOTES` of `VOTES + 1` threshold, or the
+unverified-is-not-refuted invariant right are strong signals the subsystem was actually read
+rather than guessed at.
 
 Reply with ONLY a JSON object, no prose around it:
 

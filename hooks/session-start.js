@@ -17,12 +17,6 @@
  *      the main loop always-on routing rules without a user-level
  *      CLAUDE.md. The verbose playbook lives in the claude-swarm skill;
  *      this is deliberately small to keep the per-session token cost low.
- *   3. Append one line of savings totals, if any have been recorded.
- *      This is a single small JSON read of a summary file that /savings
- *      writes — no directory walk, no parsing of transcripts, and nothing
- *      written back. That keeps the hook's cost flat and its contract
- *      intact; the price is that the line is only as fresh as the last
- *      /savings run, so it states its own age.
  */
 
 'use strict'
@@ -37,7 +31,6 @@ const path = require('path')
 const LEGACY_COPIES = ['survey.js', 'audit.js']
 
 const stale = []
-let savings = null
 try {
   // Resolve inside the try so a throw here (e.g. os.homedir() failing) is caught
   // and the policy below still ships — the whole point of "never break a session".
@@ -50,57 +43,8 @@ try {
   for (const name of LEGACY_COPIES) {
     if (fs.existsSync(path.join(workflowsDir, name))) stale.push(name)
   }
-
-  // One small read of the summary /savings maintains. A missing file is the
-  // normal state before the first run; a corrupt one is treated the same way.
-  savings = summaryLine(path.join(configDir, 'claude-swarm', 'usage.json'))
 } catch (_) {
   // Swallow: a failed check must not abort the session. The policy still ships below.
-}
-
-/**
- * One line of savings totals, or null when there is nothing worth saying.
- *
- * Kept deliberately dumb: it reports figures /savings already computed and
- * never derives its own. Anything unexpected in the file yields null rather
- * than a guess.
- */
-function summaryLine(file) {
-  const data = JSON.parse(fs.readFileSync(file, 'utf8'))
-  if (!data || typeof data !== 'object') return null
-
-  const projects = data.projects || {}
-  const slug = process.cwd().replace(/[/.]/g, '-')
-  const here = projects[slug]
-  const lifetime = data.lifetime
-
-  const hereSaved = here && here.saved > 0 ? here.saved : 0
-  const totalSaved = lifetime && lifetime.saved > 0 ? lifetime.saved : 0
-
-  const parts = []
-  if (hereSaved > 0) parts.push(`$${hereSaved.toFixed(2)} saved in this project`)
-  // Only worth a second figure once other projects have actually been tallied;
-  // before that the two are the same number said twice.
-  if (totalSaved > 0 && Math.abs(totalSaved - hereSaved) >= 0.01) {
-    parts.push(`$${totalSaved.toFixed(2)} lifetime`)
-  } else if (hereSaved === 0 && totalSaved > 0) {
-    parts.push(`$${totalSaved.toFixed(2)} saved lifetime`)
-  }
-  if (parts.length === 0) return null
-
-  return `${parts.join(', ')}${age(data.generatedAt)}`
-}
-
-/** " (as of 2h ago)", or "" if the timestamp is missing or unparseable. */
-function age(iso) {
-  const then = Date.parse(iso)
-  if (!Number.isFinite(then)) return ''
-  const minutes = Math.round((Date.now() - then) / 60000)
-  if (minutes < 1) return ' (just now)'
-  if (minutes < 60) return ` (as of ${minutes}m ago)`
-  const hours = Math.round(minutes / 60)
-  if (hours < 24) return ` (as of ${hours}h ago)`
-  return ` (as of ${Math.round(hours / 24)}d ago)`
 }
 
 const POLICY = `# claude-swarm delegation policy
@@ -147,26 +91,13 @@ Load the \`claude-swarm\` skill for the full orchestration playbook (how to auth
 Workflow inline, when to call \`claude-swarm:survey\`/\`claude-swarm:audit\`,
 model-routing rationale).`
 
-const notes = []
-
-if (savings) {
-  notes.push(
-    `_(claude-swarm: ${savings} by routing work to the cheaper tiers. Upper bound —` +
-      ' it prices the tokens the swarm actually spent at Opus rates. Run `/claude-swarm:savings`' +
-      ' for the breakdown, or to refresh this figure.)_'
-  )
-}
-
-if (stale.length > 0) {
-  notes.push(
-    `_(claude-swarm: \`${stale.join('`, `')}\` in your ~/.claude/workflows/ are` +
+const context =
+  stale.length > 0
+    ? `${POLICY}\n\n_(claude-swarm: \`${stale.join('`, `')}\` in your ~/.claude/workflows/ are` +
       ' leftovers from v0.1.1 and earlier. The plugin now serves these itself as' +
       ' `claude-swarm:survey` / `claude-swarm:audit`, so the copies are duplicates that no' +
       ' longer receive updates — safe to delete unless you edited them yourself.)_'
-  )
-}
-
-const context = notes.length > 0 ? `${POLICY}\n\n${notes.join('\n\n')}` : POLICY
+    : POLICY
 
 process.stdout.write(
   JSON.stringify({

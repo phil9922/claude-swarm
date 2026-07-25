@@ -4,8 +4,13 @@
   "expect": "swarm-wins",
   "maxTurns": 80,
   "timeoutSeconds": 1200,
-  "files": ["lib/tally.js", "hooks/session-start.js", "commands/savings.md", "test/smoke.js"],
+  "files": [
+    "workflows/audit.js",
+    "agents/tracer.md",
+    "agents/verifier.md",
+    "test/smoke.js"
+  ],
   "armPrompts": {
-    "with": "\nUse the `claude-swarm:survey` workflow to do this. Invoke it with `Workflow({name: 'claude-swarm:survey', args: {question: '<the question above>', angles: ['the tally and its pricing', 'the hook and the state files', 'the command and the tests']}})`, then write the final map yourself from what it returns.\n"
+    "with": "\nUse the `claude-swarm:survey` workflow to do this. Invoke it with `Workflow({name: 'claude-swarm:survey', args: {question: '<the question above>', angles: ['the find stage and its arguments', 'the verify stage and confirmation rule', 'the failure modes and the tests']}})`, then write the final map yourself from what it returns.\n"
   }
 }

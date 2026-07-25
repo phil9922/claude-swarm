@@ -1,7 +1,7 @@
 Audit the JavaScript in the claude-swarm repository for correctness bugs.
 
-Cover everything that ships or runs: the tally library, the SessionStart hook, both
-workflow scripts, the test suite, and the benchmark runner. Find the files yourself — do
+Cover everything that ships or runs: the SessionStart hook, both workflow scripts,
+the test suite, and the benchmark runner. Find the files yourself — do
 not assume the list is short, and do not stop after the first file that looks clean.
 
 Report every genuine correctness defect as a numbered list. For each one give:

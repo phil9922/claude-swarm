@@ -4,8 +4,7 @@ useful it is to a maintainer, on a 0.0–1.0 scale.
 The task was: audit the repository's JavaScript for **correctness** defects, discovering
 the file set rather than being handed it, and reporting each defect with a file, a
 description, and a concrete failing condition. The shipping/running JavaScript is the
-tally library, the SessionStart hook, both workflow scripts, the test suite, and the
-benchmark runner.
+SessionStart hook, both workflow scripts, the test suite, and the benchmark runner.
 
 Score on three things, roughly equally weighted:
 
