@@ -27,6 +27,15 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html): the git tag
 ### Added
 - README: a fan-out diagram showing the `audit`/`survey` shape.
 
+### Changed
+- README: model wording swept to versionless tier names ("Fable or Opus"), matching the
+  hook, skill, CONTRIBUTING, and manifests. Prompted by the Claude Opus 5 release: the
+  agents pin tiers (`model: opus`), not model IDs, so they picked up Opus 5 with no
+  config change — and versionless prose means the docs don't go stale at the next
+  release either. Pricing figures are unchanged (Opus 5 costs the same $5/$25 as
+  Opus 4.8; Fable stays 2x that). The Sonnet 5 introductory-pricing note keeps its
+  version name, since that promo is specific to the model.
+
 _Found by running the plugin's own `survey` and `audit` workflows against itself._
 
 ## [0.1.0] — 2026-07-24
