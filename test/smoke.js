@@ -448,6 +448,31 @@ check('the per-file cache is reused when a transcript looks unchanged', () => {
   }
 })
 
+check('benchmark scratch directories are excluded from the lifetime sweep', () => {
+  // evals/run.js spawns real roster agents in temp working dirs. Counting those
+  // would mean the benchmark inflates the savings figure it was built to check.
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-smoke-'))
+  const previous = process.env.CLAUDE_CONFIG_DIR
+  try {
+    process.env.CLAUDE_CONFIG_DIR = tmp
+    const projects = path.join(tmp, 'projects')
+    fs.mkdirSync(path.join(projects, '-tmp-cs-bench-abc123'), { recursive: true })
+    fs.mkdirSync(path.join(projects, '-home-user-real-project'), { recursive: true })
+
+    const result = tally.run({ all: true })
+    const slugs = Object.keys(result.projects)
+    assert(slugs.includes('-home-user-real-project'), 'a real project must be swept')
+    assert(
+      !slugs.some((s) => s.startsWith('-tmp-cs-bench-')),
+      `benchmark scratch must be skipped, got: ${slugs.join(', ')}`,
+    )
+  } finally {
+    if (previous === undefined) delete process.env.CLAUDE_CONFIG_DIR
+    else process.env.CLAUDE_CONFIG_DIR = previous
+    fs.rmSync(tmp, { recursive: true, force: true })
+  }
+})
+
 check('the summary omits projects that never used the swarm', () => {
   // The hook parses this file on every session start, and most projects on a
   // machine have no swarm usage at all. A row of zeroes each would be pure bloat.
