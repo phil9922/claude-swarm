@@ -104,15 +104,23 @@ namespaced type: `agentType: 'claude-swarm:scout'`, etc.
 
 ## The rules that keep this cheap and honest
 
-- **Know the real ceilings.** Claude Code allows **20 concurrent** subagents and **200 per
-  session** by default, tunable with `CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS` and
-  `CLAUDE_CODE_MAX_SUBAGENTS_PER_SESSION`. Past either, the `Agent` tool *fails*
+- **Know how the ceilings behave, not what they equal.** Ad-hoc `Agent` dispatch is bounded
+  two ways — how many subagents may run at once, and how many a session may spawn in total.
+  Both are tunable (`CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS`,
+  `CLAUDE_CODE_MAX_SUBAGENTS_PER_SESSION`), and past either the tool *fails*
   (`Concurrent subagent limit reached` / `Subagent spawn limit reached`) rather than
-  queueing, so a wide ad-hoc fan-out can hit a wall mid-task.
-  Agents a **workflow** spawns with `agent()` are exempt from both — workflows have their
-  own per-run limit and their own concurrency cap. That is a concrete argument for routing
-  big fan-outs through `claude-swarm:survey` / `claude-swarm:audit`, or an inline
-  `Workflow`, rather than dispatching dozens of agents by hand.
+  queueing — so a wide hand-dispatched fan-out can hit a wall mid-task with agents already
+  spent and no results.
+  Agents a **workflow** spawns with `agent()` are counted separately, against a semaphore
+  sized to the machine's CPU count plus a large per-run total. The load-bearing difference
+  is not the numbers: it is that workflow spawns **queue** where ad-hoc dispatch fails.
+  That is the concrete argument for routing big fan-outs through `claude-swarm:survey` /
+  `claude-swarm:audit`, or an inline `Workflow`, rather than dispatching dozens of agents
+  by hand.
+  Do not quote a specific ceiling from memory or from this file. They are env-tunable and
+  machine-dependent, and the live values are stated in the `Agent` and `Workflow` tool
+  descriptions in context. A number written down here is a claim that goes stale in
+  silence — which is exactly how this plugin came to advertise an invented "cap at 6".
 - **Agents can't delegate downward.** Nesting is off by default, so the `Agent` tool is
   withheld from every subagent except a fork. Dispatch each agent from the main loop; an
   agent asked to sub-delegate will just do the work itself and return one summary.

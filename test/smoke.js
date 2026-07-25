@@ -233,12 +233,19 @@ check('injected payload stays within budget', () => {
   assert(dayOne > quiet, 'the day-one case must actually include the Explore notice')
 })
 
-check('policy quotes the real ceilings, not the retired invented cap', () => {
+check('policy describes how the ceilings behave and quotes no number', () => {
+  // The invented "cap at 6" was replaced with the then-real 20/200, which was true but
+  // still the wrong SHAPE of claim: both are env-tunable, the workflow limit is derived
+  // from the machine's CPU count, and none of it is pinned by any contract we control. A
+  // number baked into the policy is a claim that goes stale in silence, and the live
+  // values are already in the Agent/Workflow tool descriptions. So the policy asserts the
+  // behavioural difference that actually drives routing — ad-hoc dispatch FAILS past its
+  // ceiling, workflow agent() spawns QUEUE — and states no figure at all.
   const ctx = hookContext({ seed: seedExplore })
   assert(!/Cap at 6|6 concurrent/.test(ctx), 'the invented 6-concurrent cap must be gone')
-  assert(/20 concurrent/.test(ctx), 'the real concurrent ceiling must be stated')
-  assert(/200\/session|200 per session/.test(ctx), 'the real session ceiling must be stated')
-  assert(/exempt/.test(ctx), 'the workflow-agent exemption must be stated')
+  assert(!/\d+\s*concurrent|\d+\s*\/\s*session|\d+ per session/.test(ctx), 'no hardcoded ceiling figures')
+  assert(/fails?\b/.test(ctx), 'ad-hoc dispatch must be described as failing past its ceiling')
+  assert(/queue/.test(ctx), 'workflow agent() spawns must be described as queueing instead')
 })
 
 check('policy carries no per-token dollar figures', () => {

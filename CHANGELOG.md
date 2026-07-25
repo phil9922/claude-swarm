@@ -7,6 +7,26 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html): the git tag
 
 ## [Unreleased]
 
+### Fixed
+- **The delegation policy no longer quotes any concurrency figure.** 0.1.3 replaced the
+  invented "cap at 6" with 20 concurrent / 200 per session. Those numbers were right —
+  verified in the shipped CLI, where they are literals (`gty=20`, `yty=200`) behind
+  `CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS` / `CLAUDE_CODE_MAX_SUBAGENTS_PER_SESSION` — but a
+  figure was still the wrong *shape* of claim: both are env-tunable, neither is pinned by
+  any contract this plugin controls, and the routing rules never actually depended on the
+  value. A number written down here is a claim that goes stale in silence, which is how
+  "cap at 6" survived as long as it did.
+  The same entry said workflow `agent()` spawns are "exempt from both", which reads as
+  *uncapped*. They are not: they run against their own semaphore, sized from the machine's
+  CPU count (`Math.min(16, Math.max(2, cores - 2))`), plus a per-run ceiling. The
+  difference that actually drives routing is behavioural — ad-hoc `Agent` dispatch **fails**
+  past its ceiling, workflow spawns **queue** — and that is a stronger argument for
+  `claude-swarm:survey`/`audit` than "exempt" ever was.
+  The policy and `skills/claude-swarm/SKILL.md` now state the behaviour, name the env vars,
+  and point at the live `Agent`/`Workflow` tool descriptions for current values. A test
+  asserts the policy contains no ceiling figure at all, so the next stale number cannot
+  ship the way the last two did.
+
 ## [0.1.3] — 2026-07-25
 
 Corrects claims about the harness that were invented or had gone stale, and teaches the

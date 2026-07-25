@@ -177,8 +177,9 @@ Saved workflows: \`claude-swarm:survey\` (map an area), \`claude-swarm:audit\` (
 then adversarially verify).
 
 ## Rules
-- Ceilings: 20 concurrent, 200/session. Workflow \`agent()\` spawns are exempt — route
-  big fan-outs through \`claude-swarm:survey\`/\`audit\`, not ad-hoc dispatch.
+- Ad-hoc \`Agent\` dispatch has concurrency and per-session ceilings and *fails* past
+  them; workflow \`agent()\` spawns queue instead. Route wide fan-outs through
+  \`claude-swarm:survey\`/\`audit\`.
 - Agents can't delegate downward (nesting is off by default) — dispatch each from here.
 - No silent truncation — if a cap or sampling dropped coverage, say so.
 - Never downgrade the model writing production code, or the main loop.
