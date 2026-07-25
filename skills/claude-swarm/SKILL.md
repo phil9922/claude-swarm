@@ -34,6 +34,25 @@ If answering needs more than ~3 files or ~500 lines, send a `claude-swarm:scout`
 re-sent every turn, so a summary that costs once beats source that costs every turn. This
 is the single biggest saving available.
 
+### `tracer` or a fork?
+
+Both keep bulk reading out of the main context, but they bill differently.
+
+A **fork** inherits the parent conversation's system prompt and tool definitions
+*unchanged*, so it reuses the parent's prompt cache instead of paying to build a new one.
+It also receives the main conversation's exact tool pool — forks skip both of the filters
+that narrow a normal subagent's tools.
+
+- **Prefer a fork** when the task needs context this session has *already loaded* —
+  continuing a line of reasoning, working against files already in the window, anything
+  where starting clean would just repurchase what you have.
+- **Prefer `claude-swarm:tracer`** when the work is bulk reading of files *not yet* in
+  context. That is the entire point: the source never enters the main window, and tracer
+  runs a tier cheaper than the main loop.
+
+A fork is not free. It runs at the parent's model and counts against the session subagent
+budget like any other spawn, so it is a cache-warm shortcut, not a cheaper tier.
+
 ## The roster and why each tier
 
 | Agent | Model · effort | Use for | Why this tier |
@@ -85,19 +104,49 @@ namespaced type: `agentType: 'claude-swarm:scout'`, etc.
 
 ## The rules that keep this cheap and honest
 
-- **Cap at 6 concurrent** by default. Go wider only for genuinely per-item work (one agent
-  per file in a migration).
+- **Know how the ceilings behave, not what they equal.** Ad-hoc `Agent` dispatch is bounded
+  two ways — how many subagents may run at once, and how many a session may spawn in total.
+  Both are tunable (`CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS`,
+  `CLAUDE_CODE_MAX_SUBAGENTS_PER_SESSION`), and past either the tool *fails*
+  (`Concurrent subagent limit reached` / `Subagent spawn limit reached`) rather than
+  queueing — so a wide hand-dispatched fan-out can hit a wall mid-task with agents already
+  spent and no results.
+  Agents a **workflow** spawns with `agent()` are counted separately, against a semaphore
+  sized to the machine's CPU count plus a large per-run total. The load-bearing difference
+  is not the numbers: it is that workflow spawns **queue** where ad-hoc dispatch fails.
+  That is the concrete argument for routing big fan-outs through `claude-swarm:survey` /
+  `claude-swarm:audit`, or an inline `Workflow`, rather than dispatching dozens of agents
+  by hand.
+  Do not quote a specific ceiling from memory or from this file. They are env-tunable and
+  machine-dependent, and the live values are stated in the `Agent` and `Workflow` tool
+  descriptions in context. A number written down here is a claim that goes stale in
+  silence — which is exactly how this plugin came to advertise an invented "cap at 6".
+- **Agents can't delegate downward.** Nesting is off by default, so the `Agent` tool is
+  withheld from every subagent except a fork. Dispatch each agent from the main loop; an
+  agent asked to sub-delegate will just do the work itself and return one summary.
 - **No silent truncation.** If a cap or a sampling decision dropped coverage, say so.
   Partial coverage that reads as complete is worse than none.
 - **Never downgrade** the model writing production code, or the main loop.
 - **Verify before reporting done.** Run the build, run the tests, read the artifact on disk.
   A green summary is a claim, not evidence — that's what `claude-swarm:verifier` is for.
-- **Fable is opt-in only.** It is 2x Opus's price ($10/$50 vs $5/$25 per 1M). Never
+- **Fable is opt-in only.** It sits at the top of the price ladder, above Opus. Never
   route to it automatically; propose it only for a task Opus has actually failed at, and
-  name the cost when proposing.
+  say plainly that it is the most expensive tier when proposing.
 
-## Pricing note
+## What the tiers actually cost
 
-Sonnet 5 is on introductory pricing until **2026-08-31** ($2/$10 vs $3/$15), making the
-sonnet-tier agents ~2.5x cheaper than Opus rather than 1.67x. Lean on `tracer`, `mechanic`,
-and `verifier` while that holds.
+The routing above depends on one fact only: **haiku < sonnet < opus < fable**. That
+ordering is what makes `scout` cheap and `implementer` expensive, and it holds on every
+plan and every provider. Route on the ordering, not on a number.
+
+Absolute prices are deliberately not quoted here. On a subscription plan there is no
+per-token figure to reason about at all; on API billing the published rates move, so a
+number baked into this file would be wrong for some readers and stale for the rest. If you
+need current rates, read Anthropic's pricing page.
+
+One consumption note that *is* worth knowing: since Claude Code v2.1.198 subagents
+**inherit the main conversation's extended thinking configuration**. Before that they ran
+with extended thinking off unconditionally. So the same roster on the same task consumes
+more than older intuitions suggest when thinking is on in your session. The tier ordering
+is unchanged; the per-agent bill is higher. Turning thinking down in the main session turns
+it down for every agent below it.
