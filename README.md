@@ -26,7 +26,8 @@ session, but the swarm never routes to the expensive tier by accident.
 how to spread work: when to fan out vs. stay solo, which agent to route to, how to author a
 `Workflow` inline, and the rules that keep credit usage down.
 
-**Two verify-by-default workflows**, installed into `~/.claude/workflows/` on first run:
+**Two verify-by-default workflows**, served by the plugin as `claude-swarm:survey` and
+`claude-swarm:audit`:
 - **`survey`** — map an unfamiliar area: scouts locate across angles, tracers follow each,
   one map is synthesized.
 - **`audit`** — find problems, then adversarially verify: findings are refuted by default,
@@ -49,13 +50,12 @@ Or from a local clone:
 /plugin install claude-swarm
 ```
 
-Start a new session after installing. On first run the hook copies `survey.js` and
-`audit.js` into `~/.claude/workflows/` (only if absent — it never overwrites your own
-copies) and injects the delegation policy.
+Start a new session after installing. The agents, skill, and workflows are served by the
+plugin directly; the SessionStart hook injects the delegation policy.
 
 **Requirement:** the SessionStart hook is a small Node script, so `node` must be on your
-`PATH`. If it isn't, the plugin still loads — you just won't get the auto-installed
-workflows or the injected policy. To install it:
+`PATH`. If it isn't, the plugin still loads — you just won't get the injected policy. To
+install it:
 
 ```
 brew install node                  # macOS
@@ -158,16 +158,17 @@ claude-swarm/
     marketplace.json     # single-repo marketplace (this repo is both)
   agents/                # the six tiered agents
   skills/claude-swarm/   # the orchestration playbook
-  workflows/             # survey.js, audit.js (installed to ~/.claude/workflows/)
-  hooks/                 # SessionStart: install workflows + inject policy
+  workflows/             # survey.js, audit.js (auto-discovered by Claude Code)
+  hooks/                 # SessionStart: inject the delegation policy
   test/smoke.js          # manifests + hook + workflows load (npm test)
   .github/workflows/     # CI: runs the smoke test on push/PR
   img/                   # README header banner (light/dark)
 ```
 
-> Workflows live under `workflows/` and are installed by the hook because Claude Code
-> plugins cannot serve Workflow scripts natively — they resolve only from
-> `~/.claude/workflows/` or a project's `.claude/workflows/`.
+> `workflows/` is auto-discovered the same way `agents/` and `skills/` are, so the scripts
+> resolve as `claude-swarm:survey` and `claude-swarm:audit` without being copied anywhere.
+> Versions up to 0.1.1 copied them into `~/.claude/workflows/` instead; if you installed one
+> of those, the leftovers are inert duplicates and the hook will point them out.
 
 ## Support
 

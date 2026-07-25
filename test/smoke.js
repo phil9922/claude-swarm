@@ -79,7 +79,7 @@ check('hooks/session-start.js is syntactically valid', () => {
 
 // --- 2b. Hook runtime contract: always ships the policy ---------------------
 
-check('hook emits policy JSON and installs the workflows (happy path)', () => {
+check('hook emits policy JSON and writes nothing (happy path)', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-smoke-'))
   try {
     const out = execFileSync(process.execPath, [HOOK], {
@@ -89,9 +89,37 @@ check('hook emits policy JSON and installs the workflows (happy path)', () => {
     const o = JSON.parse(out)
     assert(o.hookSpecificOutput.hookEventName === 'SessionStart', 'SessionStart output required')
     assert(/delegation policy/.test(o.hookSpecificOutput.additionalContext), 'policy must be present')
-    for (const wf of ['survey.js', 'audit.js']) {
-      assert(fs.existsSync(path.join(tmp, 'workflows', wf)), `${wf} should be installed`)
-    }
+    // The plugin serves workflows/ natively, so the hook must no longer copy
+    // anything into the config dir — nor create the directory to copy into.
+    assert(fs.readdirSync(tmp).length === 0, 'hook must not write to the config dir')
+    assert(
+      !/leftovers from v0\.1\.1/.test(o.hookSpecificOutput.additionalContext),
+      'a clean config dir must not trigger the stale-copy notice',
+    )
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true })
+  }
+})
+
+check('hook reports pre-0.1.2 leftover workflow copies without deleting them', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-smoke-'))
+  try {
+    // Simulate an install upgraded from <=0.1.1, which copied these in.
+    const wfDir = path.join(tmp, 'workflows')
+    fs.mkdirSync(wfDir, { recursive: true })
+    fs.writeFileSync(path.join(wfDir, 'survey.js'), '// stale\n')
+    const out = execFileSync(process.execPath, [HOOK], {
+      encoding: 'utf8',
+      env: { ...process.env, CLAUDE_CONFIG_DIR: tmp, CLAUDE_PLUGIN_ROOT: root },
+    })
+    const ctx = JSON.parse(out).hookSpecificOutput.additionalContext
+    assert(/survey\.js/.test(ctx), 'the leftover must be named in the notice')
+    assert(!/audit\.js/.test(ctx), 'an absent leftover must not be reported')
+    // Reporting only — the user's file must survive untouched.
+    assert(
+      fs.readFileSync(path.join(wfDir, 'survey.js'), 'utf8') === '// stale\n',
+      'the hook must never modify or delete a file in the config dir',
+    )
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true })
   }

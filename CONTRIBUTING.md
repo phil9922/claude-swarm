@@ -29,9 +29,11 @@ every push and pull request — **keep it green.** Requires `node` on your `PATH
 - **A new agent** — add `agents/<name>.md` with frontmatter (`name`, `description`,
   `model`, and `tools`). Add the expected name to `EXPECTED_AGENTS` in
   `test/smoke.js` so it's covered. Pin it to the cheapest model that does its job.
-- **A new workflow** — add `workflows/<name>.js`, then add its filename to the
-  `WORKFLOWS` array in `hooks/session-start.js` so the hook installs it. It must
-  begin with a pure-literal `export const meta = { name, description, phases }`.
+- **A new workflow** — add `workflows/<name>.js`. Claude Code auto-discovers the
+  directory, so it resolves as `claude-swarm:<name>` with no wiring. It must begin
+  with a pure-literal `export const meta = { name, description, phases }`. Leave the
+  `LEGACY_COPIES` list in `hooks/session-start.js` alone — that is a fixed record of
+  what v0.1.1 and earlier copied into `~/.claude/workflows/`, not a registry.
 - **The delegation policy** — the compact version injected each session lives in
   `hooks/session-start.js`; the full playbook is `skills/claude-swarm/SKILL.md`.
   Keep them consistent when you change routing rules.

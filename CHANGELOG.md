@@ -7,6 +7,28 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html): the git tag
 
 ## [Unreleased]
 
+## [0.1.2] — 2026-07-24
+
+### Changed
+- The SessionStart hook no longer copies `survey.js`/`audit.js` into
+  `~/.claude/workflows/`. It never needed to: Claude Code auto-discovers a plugin's
+  `workflows/` directory exactly as it does `agents/` and `skills/` — a plain
+  directory-existence check in the plugin loader, with no feature gate — so the plugin
+  has been serving `claude-swarm:survey` and `claude-swarm:audit` all along. The copy
+  was a duplicate whose `if (exists) continue` guard also froze it forever: it was
+  written once and never refreshed, so every later release silently left a stale
+  second copy behind. The hook now only *reports* leftovers from 0.1.1 and earlier;
+  deleting files from a user's config dir is not a SessionStart hook's call to make.
+- The injected policy and the skill now name the workflows `claude-swarm:survey` /
+  `claude-swarm:audit`, matching how the agents are already namespaced.
+
+### Fixed
+- Skill: the documented invocation was `Workflow({ name: 'survey' }, "…")`, which
+  passes the target as a second positional argument. `Workflow` takes a single input
+  object — corrected to `Workflow({ name: 'claude-swarm:survey', args: '…' })`.
+- Docs: README and CONTRIBUTING asserted that "Claude Code plugins cannot serve
+  Workflow scripts natively." They can; the claim is removed.
+
 ## [0.1.1] — 2026-07-24
 
 ### Fixed
@@ -58,6 +80,7 @@ Initial release.
 - **Smoke test and GitHub Actions CI** — static validation of the manifests,
   runtime checks of the hook contract, and compile checks of the workflow scripts.
 
-[Unreleased]: https://github.com/phil9922/claude-swarm/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/phil9922/claude-swarm/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/phil9922/claude-swarm/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/phil9922/claude-swarm/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/phil9922/claude-swarm/releases/tag/v0.1.0

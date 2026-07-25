@@ -50,14 +50,20 @@ risky, mechanic to apply what's decided, verifier to attack a claim, scribe to w
 
 ## The two saved workflows
 
-The SessionStart hook installs these into `~/.claude/workflows/`, so they resolve by name:
+The plugin serves these itself — Claude Code auto-discovers a plugin's `workflows/`
+directory — so they resolve under the plugin's namespace:
 
-- **`survey`** — map an unfamiliar area. Fans scouts across angles → a tracer follows each →
-  synthesizes one map. Call it when "how does X work" would mean reading many files into the
-  main context. `Workflow({ name: 'survey' }, "how does auth work")`
-- **`audit`** — find problems, then adversarially verify. One tracer per lens finds
-  candidates → independent verifiers try to refute each → only survivors are reported. Call
-  it for reviews, diff audits, bug hunts. `Workflow({ name: 'audit' }, "the uncommitted diff")`
+- **`claude-swarm:survey`** — map an unfamiliar area. Fans scouts across angles → a tracer
+  follows each → synthesizes one map. Call it when "how does X work" would mean reading many
+  files into the main context.
+  `Workflow({ name: 'claude-swarm:survey', args: 'how does auth work' })`
+- **`claude-swarm:audit`** — find problems, then adversarially verify. One tracer per lens
+  finds candidates → independent verifiers try to refute each → only survivors are reported.
+  Call it for reviews, diff audits, bug hunts.
+  `Workflow({ name: 'claude-swarm:audit', args: 'the uncommitted diff' })`
+
+Pass the target through `args`, not as a second positional argument — `Workflow` takes a
+single input object.
 
 ## Authoring a Workflow inline
 
