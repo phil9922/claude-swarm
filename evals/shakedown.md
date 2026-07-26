@@ -153,9 +153,21 @@ Integration = last leaf line → integration end. Feed timestamps are completion
 starts, so the split is approximate — say so in the record rather than presenting it
 as exact.
 
-**5. Score.** Fill the template below, then mark each line of the pre-registered
-prediction confirmed / falsified / void, in `README.md`'s terms. Don't edit the
-prediction.
+**5. Record, then score.** Fill the template below and save it as
+`evals/shakedown-results.md` — deliberately outside the gitignored `results/`, so
+the record and its scoring live in git next to the prediction. Then, in a separate
+session, mark each line of the pre-registered prediction confirmed / falsified /
+void, in `README.md`'s terms, appended as a dated section below the filled
+template. Don't edit the prediction.
+
+**If running the arms interactively instead of via the `-p` commands above**, the
+prompts change but the conditions must not. Carry over per arm:
+`CLAUDE_CODE_DISABLE_CLAUDE_MDS=1` in the environment (the solo arm is not a solo
+baseline if a global CLAUDE.md hands it a delegation policy); deny `Task` and
+`Workflow` to the solo arm (stock Claude Code still has Explore/general-purpose
+subagents); `--plugin-dir` on the build arm; wall time by hand from prompt-send to
+stop; `/cost` captured at the end of each session before doing anything else, and
+the per-model breakdown from it standing in for `modelUsage`.
 
 ## Recording template
 
@@ -164,6 +176,10 @@ prediction.
 Claude Code version:            Plugin version/path:
 Model/effort (master):          CLAUDE_CODE_SUBAGENT_MODEL: unset? y/n
 Scaffolds identical at commit:  <sha>
+Scope limit (copy into any writeup): the workflow was explicitly invoked, so this
+run measures whether build DELIVERS on its wall/cost claims — it says nothing
+about whether a master would route to it unprompted; that is a separate experiment.
+Interventions (what was said, when — "none" if none):
 
 | metric | solo | build |
 |---|---|---|
