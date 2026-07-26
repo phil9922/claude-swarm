@@ -7,6 +7,51 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html): the git tag
 
 ## [Unreleased]
 
+## [0.2.5] — 2026-07-26
+
+### Added
+- **A finished wave lingers on the main status line for 30 seconds instead of
+  vanishing.** The segment only ever rendered while an agent was actually running,
+  and agents routinely finish in 15–45s — one wave measured live gave a **12-second
+  window**, so in ordinary use the summary flashed and disappeared, leaving no
+  evidence a swarm had run at all. A finished wave now renders dimmed with its tier
+  backgrounds dropped and the clock frozen at how long it ran (`· ran 1:23` rather
+  than `· oldest 1:23`), so "just finished" is never mistaken at a glance for
+  "running right now".
+
+  The obvious implementation is wrong and was rejected: widening the reader's 10s
+  staleness cutoff does nothing, because `scripts/subagent-statusline.js` rewrites
+  the cache on **every** tick including idle ones (before the `lines.length` check),
+  so a finished wave looks exactly as fresh as an hour of silence. The writer is the
+  only party that can see the transition, so it now retains the last live counts and
+  stamps `endedAt` when the running count falls to zero — never restamping it on
+  later idle ticks, or the segment would linger as long as the panel kept ticking.
+  The reader anchors the window to `endedAt` rather than to mtime, because the panel
+  stops rewriting the cache once its rows clear and a finished record goes stale well
+  before the window closes. A new wave starting inside the window replaces the
+  lingering state outright. The aggregate grows from ~150 to ~180 bytes while
+  lingering.
+
+### Fixed
+- **Corrected the documented size of the aggregate cache.** README, CHANGELOG and the
+  renderer's own header all claimed `~100 bytes`; measured, it is 148 (now 153, and
+  177 while a finished wave lingers). The 55-character human-readable `note` string
+  in the file accounts for most of the gap.
+- **`package.json` version caught up to the release**, 0.2.2 → 0.2.4. It is not
+  covered by the semver rule above (which scopes to `.claude-plugin/plugin.json`) but
+  had drifted two releases behind.
+
+### Tests
+- **Smoke checks 61 → 65.** The grace window's writer contract (stamps on the
+  transition, retains the last live counts and start, never restamps, and a session
+  that never ran anything is idle rather than "just finished") and its reader
+  behaviour (lingers dimmed, freezes the clock, survives a stale file, goes quiet
+  past the window, and yields to a new wave). Both new checks were mutation-tested —
+  zeroing the window and restamping the anchor each fail exactly one check. Also
+  added the crash-resilience cases the panel depended on but never covered: an absent
+  `tasks` array, a non-array `tasks`, `null`/primitive/id-less entries mixed with a
+  good row, and a main-segment payload carrying no `session_id`.
+
 ## [0.2.4] — 2026-07-26
 
 ### Fixed
@@ -157,7 +202,7 @@ pre-registered predictions and the frozen shakedown protocol are untouched.
   triggers go quiet exactly while a master waits on background subagents.
 - **One deviation from "no state file", forced by the harness:** the main status
   line's stdin carries session data only — the `tasks` array goes exclusively to
-  `subagentStatusLine` — so the subagent renderer caches a ~100-byte per-session
+  `subagentStatusLine` — so the subagent renderer caches a ~150-byte per-session
   aggregate in the OS temp dir (the statusline docs' own caching pattern, keyed by
   sanitized `session_id`) and the segment reads it with a 10s staleness cutoff.
 - **Smoke checks (51 → 60)** run both scripts against synthetic payloads: the tier

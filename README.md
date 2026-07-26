@@ -307,9 +307,10 @@ It is a manual step for two documented reasons:
   `subagentStatusLine` keys are currently supported" (plugins reference).
 - The main status line's stdin carries **session data only, no task list** — the
   `tasks` array goes exclusively to `subagentStatusLine`. So the subagent renderer
-  caches a ~100-byte per-session aggregate in the OS temp dir (the statusline docs'
-  own caching pattern, keyed by `session_id`), and this segment reads it with a
-  10-second staleness cutoff. Display-only; safe to delete at any time.
+  caches a ~150-180-byte per-session aggregate in the OS temp dir (the statusline
+  docs' own caching pattern, keyed by `session_id`), and this segment reads it with
+  a 10-second staleness cutoff. A finished wave lingers dimmed for 30 seconds
+  before the segment goes quiet. Display-only; safe to delete at any time.
 
 Copy `scripts/swarm-statusline.js` to somewhere stable — a settings entry cannot use
 `${CLAUDE_PLUGIN_ROOT}`, and the plugin's install path changes on every update, so

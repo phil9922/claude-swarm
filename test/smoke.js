@@ -1015,6 +1015,50 @@ check('subagent statusline writes the per-session aggregate cache', () => {
   assert(agg.oldestStart === oldestTask, `oldestStart is the longest-running task's startTime, got ${agg.oldestStart}`)
 })
 
+// A payload that is valid JSON but wrong in shape must degrade to Claude Code's
+// default rendering, never to a crash: exit 2 or a stack trace on stdout would
+// take the whole panel down, and these are the shapes a future payload change is
+// most likely to arrive in.
+check('subagent statusline degrades on a malformed task list rather than crashing', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-sl-'))
+
+  const noTasks = runStatusline(SUB_SL, JSON.stringify({ session_id: 'shape-a', columns: 80 }), tmp)
+  assert(noTasks.status === 0, `absent tasks array must exit 0, got ${noTasks.status}`)
+  assert(noTasks.stdout === '', 'absent tasks array renders no rows')
+  const agg = JSON.parse(fs.readFileSync(path.join(tmp, 'claude-swarm-status-shape-a.json'), 'utf8'))
+  assert(Object.values(agg.counts).every((n) => n === 0), 'and still writes a zeroed aggregate')
+
+  const notArray = runStatusline(SUB_SL, JSON.stringify({ session_id: 'shape-b', tasks: 'nope' }), tmp)
+  assert(notArray.status === 0 && notArray.stdout === '', 'non-array tasks → no rows, exit 0')
+
+  // One good row among entries the filter must drop: null, a primitive, and an
+  // object with no id (an id is what Claude Code keys the row back to).
+  const mixed = {
+    session_id: 'shape-c',
+    columns: 80,
+    tasks: [
+      null,
+      42,
+      { type: 'local_agent', label: 'no id at all', status: 'running', startTime: Date.now() - 3000 },
+      { id: 't-good', type: 'local_agent', label: 'survivor', status: 'running',
+        startTime: Date.now() - 7000, model: 'claude-sonnet-5', contextWindowSize: 200000, tokenCount: 5000 },
+    ],
+  }
+  const res = runStatusline(SUB_SL, JSON.stringify(mixed), tmp)
+  assert(res.status === 0, `mixed payload must exit 0, got ${res.status}`)
+  const lines = res.stdout.trim().split('\n').filter(Boolean)
+  assert(lines.length === 1, `only the well-formed row renders, got ${lines.length}`)
+  assert(JSON.parse(lines[0]).id === 't-good', 'and it is the row that had an id')
+})
+
+check('main statusline segment stays quiet when the payload carries no session id', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-sl-'))
+  runStatusline(SUB_SL, JSON.stringify(SL_TASKS), tmp) // a live cache exists...
+  const res = runStatusline(MAIN_SL, JSON.stringify({ model: { display_name: 'Opus 5' } }), tmp)
+  assert(res.status === 0, `must exit 0 without a session id, got ${res.status}`)
+  assert(res.stdout === '', '...but with no session id there is no cache to key on, so no segment')
+})
+
 check('main statusline segment reads the cache, goes quiet when stale or absent', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-sl-'))
   const stdin = JSON.stringify({ session_id: 'smoke-sess' })
@@ -1041,6 +1085,75 @@ check('main statusline segment reads the cache, goes quiet when stale or absent'
 
   const garbage = runStatusline(MAIN_SL, 'not json', tmp)
   assert(garbage.status === 0 && garbage.stdout === '', 'garbage stdin → empty output, exit 0')
+})
+
+// The cache is rewritten on every tick, including idle ones, so mtime cannot say
+// whether a wave just ended or nothing has run all session. The writer records the
+// transition; these checks pin the contract both scripts depend on.
+check('subagent statusline stamps the end of a wave and keeps the last live counts', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-sl-'))
+  const cache = path.join(tmp, 'claude-swarm-status-smoke-sess.json')
+
+  runStatusline(SUB_SL, JSON.stringify(SL_TASKS), tmp)
+  const live = JSON.parse(fs.readFileSync(cache, 'utf8'))
+  assert(!('endedAt' in live), 'a running wave carries no end stamp')
+
+  runStatusline(SUB_SL, JSON.stringify({ session_id: 'smoke-sess', columns: 100, tasks: [] }), tmp)
+  const ended = JSON.parse(fs.readFileSync(cache, 'utf8'))
+  assert(Number.isFinite(ended.endedAt), 'the tick that drops to zero stamps endedAt')
+  assert(ended.counts.sonnet === 1 && ended.counts.haiku === 1 && ended.counts.opus === 1,
+    'and retains the last live counts rather than the zeroes that replaced them')
+  assert(ended.oldestStart === live.oldestStart, 'and the original start, so the clock can be frozen')
+
+  // Idle ticks keep arriving while the panel still shows terminal rows; the anchor
+  // must not move, or the segment lingers for as long as the panel keeps ticking.
+  runStatusline(SUB_SL, JSON.stringify({ session_id: 'smoke-sess', columns: 100, tasks: [] }), tmp)
+  const again = JSON.parse(fs.readFileSync(cache, 'utf8'))
+  assert(again.endedAt === ended.endedAt, 'a later idle tick must not restamp endedAt')
+
+  // A session that has never run anything is idle, not "just finished".
+  const cold = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-sl-'))
+  runStatusline(SUB_SL, JSON.stringify({ session_id: 'cold', columns: 100, tasks: [] }), cold)
+  const coldRec = JSON.parse(fs.readFileSync(path.join(cold, 'claude-swarm-status-cold.json'), 'utf8'))
+  assert(!('endedAt' in coldRec), 'no prior wave → no end stamp → nothing to linger')
+})
+
+check('main statusline segment lingers dimmed after a wave, then goes quiet', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-sl-'))
+  const stdin = JSON.stringify({ session_id: 'smoke-sess' })
+  const cache = path.join(tmp, 'claude-swarm-status-smoke-sess.json')
+
+  runStatusline(SUB_SL, JSON.stringify(SL_TASKS), tmp)
+  const running = stripAnsi(runStatusline(MAIN_SL, stdin, tmp).stdout)
+  assert(/· oldest /.test(running), `a live wave reports the oldest agent's clock, got "${running}"`)
+
+  runStatusline(SUB_SL, JSON.stringify({ session_id: 'smoke-sess', columns: 100, tasks: [] }), tmp)
+  const res = runStatusline(MAIN_SL, stdin, tmp)
+  const seg = stripAnsi(res.stdout)
+  assert(res.status === 0, 'lingering must exit 0')
+  assert(/1S/.test(seg) && /1H/.test(seg) && /1O/.test(seg), `the finished wave's counts still show, got "${seg}"`)
+  assert(/· ran 2:0\d/.test(seg), `the clock freezes at how long the wave ran, got "${seg}"`)
+  assert(!/· oldest/.test(seg), 'and no longer claims anything is running')
+  assert(!/\x1b\[10[236];30m/.test(res.stdout), 'tier backgrounds are dropped while lingering')
+
+  // The panel stops rewriting the cache once its rows clear, so a finished record
+  // goes stale long before the grace window closes. Staleness must not preempt it.
+  const past = new Date(Date.now() - 60000)
+  fs.utimesSync(cache, past, past)
+  const stale = stripAnsi(runStatusline(MAIN_SL, stdin, tmp).stdout)
+  assert(/· ran /.test(stale), `a stale but recently-ended record still lingers, got "${stale}"`)
+
+  // Past the window it is gone, however fresh the file is.
+  const rec = JSON.parse(fs.readFileSync(cache, 'utf8'))
+  rec.endedAt -= 45000
+  fs.writeFileSync(cache, JSON.stringify(rec))
+  const expired = runStatusline(MAIN_SL, stdin, tmp)
+  assert(expired.status === 0 && expired.stdout === '', 'past the grace window the segment goes quiet')
+
+  // A new wave inside the window replaces the lingering state outright.
+  runStatusline(SUB_SL, JSON.stringify(SL_TASKS), tmp)
+  const revived = stripAnsi(runStatusline(MAIN_SL, stdin, tmp).stdout)
+  assert(/· oldest /.test(revived), `a new wave renders live again, got "${revived}"`)
 })
 
 // --- Report ----------------------------------------------------------------

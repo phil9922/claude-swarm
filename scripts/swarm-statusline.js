@@ -8,6 +8,16 @@
  * operations" pattern, keyed by session_id). If the cache is missing or stale,
  * it prints nothing: no swarm running, no segment.
  *
+ * A wave that has just finished is the exception. The writer stamps `endedAt`
+ * when its running count falls to zero, and for 30s after that the segment still
+ * renders — dimmed, backgrounds dropped, clock frozen at how long the wave ran
+ * (`· ran 1:23` rather than `· oldest 1:23`). Without it the segment vanished the
+ * instant the last agent exited: agents routinely finish in 15-45s, one measured
+ * wave gave a 12-second window, and a wave ending while you read code left no
+ * evidence it had run. The grace window is anchored to `endedAt`, NOT to mtime,
+ * because the panel stops rewriting the cache once its rows clear — a finished
+ * record goes stale (10s) well before the window (30s) closes.
+ *
  * This is a POST-INSTALL script: a plugin's settings.json may only ship the
  * `agent` and `subagentStatusLine` keys ("Only the `agent` and
  * `subagentStatusLine` keys are currently supported" — plugins reference), so
@@ -45,6 +55,14 @@ const DIM = '\x1b[2m'
 // The subagent panel stops ticking when the wave ends, so the cache's mtime is
 // the liveness signal: past this age the counts describe a finished wave.
 const STALE_MS = 10000
+// How long a finished wave stays on screen, dimmed. Agents routinely finish in
+// 15-45s, so a segment that disappeared the instant the last one exited was
+// invisible in ordinary use — measured at one 12-second window in practice.
+// The writer stamps `endedAt` on the transition to zero; this window is anchored
+// to that stamp rather than to mtime, because the panel stops rewriting the file
+// once its rows clear and the record would otherwise go stale before the window
+// closed.
+const GRACE_MS = 30000
 
 function main(raw) {
   const input = JSON.parse(raw)
@@ -57,14 +75,26 @@ function main(raw) {
   const file = path.join(os.tmpdir(), `claude-swarm-status-${sid}.json`)
 
   const stat = fs.statSync(file) // throws if absent → empty output
-  if (Date.now() - stat.mtimeMs > STALE_MS) return
-
   const cached = JSON.parse(fs.readFileSync(file, 'utf8'))
+
+  // Two different liveness questions, and only one of them is about mtime. A
+  // live record is trusted while the writer is still ticking. A finished record
+  // carries its own clock and is trusted for a fixed window after the wave
+  // ended, whether or not anything is still refreshing the file.
+  const endedAt = Number.isFinite(cached.endedAt) ? cached.endedAt : null
+  if (endedAt === null) {
+    if (Date.now() - stat.mtimeMs > STALE_MS) return
+  } else if (Date.now() - endedAt > GRACE_MS) {
+    return
+  }
+
   const counts = cached.counts || {}
   const chips = []
   for (const [tier, [letter, color]] of Object.entries(TIER_CHIP)) {
     const n = counts[tier]
-    if (Number.isFinite(n) && n > 0) chips.push(`${color} ${n}${letter} ${RESET}`)
+    // A finished wave drops the tier backgrounds and goes dim, so "just ran" is
+    // never mistaken at a glance for "running right now".
+    if (Number.isFinite(n) && n > 0) chips.push(`${endedAt === null ? color : DIM} ${n}${letter} ${RESET}`)
   }
   if (!chips.length) return
 
@@ -75,8 +105,13 @@ function main(raw) {
   let clock = ''
   const oldest = cached.oldestStart
   if (Number.isFinite(oldest)) {
-    const s = Math.max(0, Math.floor((Date.now() - oldest) / 1000))
-    clock = ` ${DIM}· oldest ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}${RESET}`
+    // Live: the clock runs, so it is computed against now. Finished: it stops at
+    // the moment the wave ended and reports how long the wave lasted — a clock
+    // still climbing after the last agent exited would be a lie.
+    const end = endedAt === null ? Date.now() : endedAt
+    const s = Math.max(0, Math.floor((end - oldest) / 1000))
+    const mmss = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
+    clock = ` ${DIM}· ${endedAt === null ? 'oldest' : 'ran'} ${mmss}${RESET}`
   }
   process.stdout.write(`${DIM}claude-swarm${RESET} ${chips.join(' ')}${clock}`)
 }

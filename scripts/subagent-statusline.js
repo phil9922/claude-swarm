@@ -34,7 +34,7 @@
  * So elapsed steps in 5s jumps, and the aggregate cache below is rewritten at that
  * same rate, which is what the reader's 10s staleness cutoff allows for: two ticks.
  *
- * Side effect: writes a ~100-byte per-session aggregate (running count by tier)
+ * Side effect: writes a ~150-180-byte per-session aggregate (running count by tier)
  * to the OS temp dir. The main statusLine's stdin carries no task data, so this
  * cache is the only bridge to an aggregate segment there — same pattern as the
  * docs' "cache expensive operations" example, keyed by session_id.
@@ -75,7 +75,7 @@ const MAX_LABEL = 24
 const ELAPSED_NORMAL_S = 180
 const ELAPSED_BOLD_S = 360
 
-const AGG_STALE_NOTE = 'read by scripts/swarm-statusline.js with a 10s cutoff'
+const AGG_STALE_NOTE = 'read by scripts/swarm-statusline.js: 10s cutoff, 30s grace'
 
 function tierOf(model) {
   if (typeof model !== 'string' || !model) return null
@@ -199,6 +199,13 @@ function renderRow(task, columns, sharedLabelW) {
   return parts.join('  ')
 }
 
+function totalOf(counts) {
+  if (!counts || typeof counts !== 'object') return 0
+  let n = 0
+  for (const v of Object.values(counts)) if (Number.isFinite(v)) n += v
+  return n
+}
+
 function writeAggregate(sessionId, counts, oldestStart) {
   // Keyed by session_id (a base hook field on this input) so concurrent
   // sessions never read each other's counts; sanitized because it feeds a path.
@@ -208,11 +215,37 @@ function writeAggregate(sessionId, counts, oldestStart) {
   const os = require('os')
   const path = require('path')
   const file = path.join(os.tmpdir(), `claude-swarm-status-${sid}.json`)
+
+  // This file is rewritten on EVERY tick, including ticks with no running rows,
+  // so its mtime cannot tell the reader whether a wave just ended or nothing has
+  // run for an hour — both look equally fresh. The transition is therefore
+  // recorded here, by the only party that can see it: when the count falls to
+  // zero, the last live snapshot is retained and stamped with `endedAt`, which
+  // anchors the reader's grace window. Without this the segment would vanish the
+  // instant the last agent exits, and a wave finishing while you read code would
+  // leave no evidence it ever ran.
+  let record = { note: AGG_STALE_NOTE, counts, oldestStart }
+  if (totalOf(counts) === 0) {
+    let prev = null
+    try {
+      prev = JSON.parse(fs.readFileSync(file, 'utf8'))
+    } catch (_) {
+      prev = null // no prior file, or unreadable: treat this as a cold idle tick
+    }
+    if (prev && Number.isFinite(prev.endedAt)) {
+      // Already inside a grace window. Keep the original anchor rather than
+      // restamping it, or the segment would linger for as long as the panel
+      // keeps ticking instead of the fixed window.
+      record = prev
+    } else if (prev && totalOf(prev.counts) > 0) {
+      record = { note: AGG_STALE_NOTE, counts: prev.counts, oldestStart: prev.oldestStart, endedAt: Date.now() }
+    }
+  }
   // oldestStart is a raw timestamp, not an elapsed value, so the reader can
   // recompute the clock on ITS tick: the main status line refreshes every second
   // while this cache is only rewritten every five, and a stored elapsed would
   // visibly freeze for four ticks out of five.
-  fs.writeFileSync(file, JSON.stringify({ note: AGG_STALE_NOTE, counts, oldestStart }))
+  fs.writeFileSync(file, JSON.stringify(record))
 }
 
 function main(raw) {
