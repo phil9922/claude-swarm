@@ -67,6 +67,35 @@ identical; only the route to it differs, and that route is the intervention.
 This is a deliberate, documented exception. The runner prints a warning for any case that
 uses it, so the result cannot be quietly read as like-for-like.
 
+## Recorded prediction: audit loses to solo on cost
+
+*Written 2026-07-25, before any benchmark of the audit workflow has run. Do not edit this
+section after one has; score it.*
+
+The shared-input rule (SKILL.md, the Build gate) predicts `claude-swarm:audit` costs
+**more** than the same audit done solo at equal tier. Reasoning: audit's lenses sweep the
+same codebase, so each finder re-buys the read a solo pass pays once — the exact mechanism
+measured on `survey-subsystem`, where angles reading the same files produced a 3.95x cost
+loss. Batched verification cuts the verifier count but not the sign: verifiers re-read the
+same code the finders read.
+
+What audit buys instead is quality — independent adversarial verification a solo pass
+doesn't perform. The honest claim is *better, not cheaper*, possibly also *faster*.
+
+If a benchmark comes back with audit **cheaper** than solo at equal tier and comparable
+quality, the shared-input rule is wrong. Treat that as a finding about the rule and revisit
+the gate; do not bank it as a win and move on.
+
+### The quality arm of the same prediction
+
+"Audit is a quality play" is itself unmeasured — the same species of claim as the "cheaper"
+claims that were removed, and it gets the same treatment. Prediction: on the existing
+graders, audited output scores **at least as high as solo, with fewer false or unverifiable
+findings**, because independent refutation is something a solo pass structurally lacks — a
+context that produced a finding is biased toward confirming it. If graded quality comes
+back no better than solo, audit has no measured claim left, neither cheaper nor better, and
+the workflow-labels table in `SKILL.md` must say so.
+
 ## Running it
 
 ```bash

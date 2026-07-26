@@ -3,3 +3,7 @@
 evals/results/
 
 node_modules/
+
+# Appended by the SubagentStop completion-feed hook in any project the plugin
+# is enabled in — including this one, whenever its own subagents run.
+.claude-swarm-feed.log

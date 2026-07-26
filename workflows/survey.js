@@ -1,10 +1,10 @@
 export const meta = {
   name: 'survey',
-  description: 'Map an unfamiliar area of a codebase: fan out readers across angles, then synthesize one answer',
-  whenToUse: 'When answering "how does X work" would mean reading many files into the main context. Pass the question as args (a string, or {question, angles, focus}).',
+  description: 'Map an area of a codebase in one wave: one reader per angle, one synthesis',
+  whenToUse:
+    'When "how does X work" would mean reading many files into the main context. Pass args as a string question, or {question, angles, focus, files}. If the relevant files are already known, pass them as files — readers skip discovery and go straight to them. This is a latency-and-shield play, not a cost win: it returns sooner than reading solo and keeps the sources out of the main window, but the angles share their input, so it costs more than one context reading once.',
   phases: [
-    { title: 'Locate', detail: 'cheap scouts find the surface area, one per angle' },
-    { title: 'Trace', detail: 'a deep reader follows each angle it found' },
+    { title: 'Read', detail: 'one locate-and-read agent per angle' },
     { title: 'Synthesize', detail: 'one map assembled from every thread' },
   ],
 }
@@ -27,6 +27,10 @@ if (typeof input === 'string') {
 const question =
   typeof input === 'string' ? input : (input && input.question) || 'How does this codebase work?'
 const focus = (input && input.focus) || ''
+// Files the caller already knows are relevant. When present, readers skip
+// discovery entirely — the master usually already knows where to look, and
+// paying five agents to re-discover a known file list is pure overhead.
+const files = input && Array.isArray(input.files) && input.files.length ? input.files : null
 
 const DEFAULT_ANGLES = [
   { key: 'entry', lens: 'Entry points and public API — how callers get in, what the exported surface is.' },
@@ -41,27 +45,6 @@ const DEFAULT_ANGLES = [
 const angles =
   input && Array.isArray(input.angles) && input.angles.length ? input.angles : DEFAULT_ANGLES
 
-const LOCATIONS = {
-  type: 'object',
-  additionalProperties: false,
-  required: ['locations', 'notes'],
-  properties: {
-    locations: {
-      type: 'array',
-      items: {
-        type: 'object',
-        additionalProperties: false,
-        required: ['path', 'why'],
-        properties: {
-          path: { type: 'string', description: 'file path, with :line when known' },
-          why: { type: 'string', description: 'one clause on why this is relevant' },
-        },
-      },
-    },
-    notes: { type: 'string', description: 'what was searched for and not found, or ambiguity worth flagging' },
-  },
-}
-
 const THREAD = {
   type: 'object',
   additionalProperties: false,
@@ -74,61 +57,40 @@ const THREAD = {
   },
 }
 
-log(`Surveying ${angles.length} angles: ${question}`)
+log(`Surveying ${angles.length} angles${files ? ` across ${files.length} known files` : ''}: ${question}`)
 
-const threads = await pipeline(
-  angles,
-
-  (angle) =>
+// One wave: each angle is a single agent that locates (unless the caller already
+// did) and reads. The old shape — a scout wave feeding a tracer wave — bought the
+// same files three times across three chained stages and measured 3.95x solo cost
+// at 4.63x the wall time; merged readers pay for them once.
+const threads = await parallel(
+  angles.map((angle) => () =>
     agent(
-      `Question under investigation: ${question}\n${focus ? `Focus area: ${focus}\n` : ''}
-Your angle: ${angle.lens}
-
-Find the files and lines relevant to THIS angle only. Search several ways before
-concluding something is absent. Return locations, not explanations.`,
-      { agentType: 'claude-swarm:scout', label: `locate:${angle.key}`, phase: 'Locate', schema: LOCATIONS },
-    ),
-
-  (found, angle) => {
-    if (!found || !found.locations || found.locations.length === 0) {
-      log(`  ${angle.key}: nothing found — ${(found && found.notes) || 'no detail'}`)
-      return null
-    }
-    const list = found.locations.map((l) => `- ${l.path} — ${l.why}`).join('\n')
-    return agent(
       `Question under investigation: ${question}
-
+${focus ? `Focus area: ${focus}\n` : ''}
 Your angle: ${angle.lens}
-
-A scout found these starting points:
-${list}
-${found.notes ? `\nScout notes: ${found.notes}` : ''}
-
-Read them and whatever they lead to. Follow the real control flow through
+${
+  files
+    ? `\nThe caller already knows the relevant files — start from these, do not re-discover them:\n${files.map((f) => `- ${f}`).join('\n')}\n`
+    : `\nFirst find the files relevant to THIS angle — search several ways before concluding something is absent — then read them.`
+}
+Read what you find and whatever it leads to. Follow the real control flow through
 interfaces and indirection to the concrete implementation. Answer the angle.
 The caller cannot see anything you read — your summary is all they get.`,
-      { agentType: 'claude-swarm:tracer', label: `trace:${angle.key}`, phase: 'Trace', schema: THREAD },
-    ).then((t) => {
-      if (!t) {
-        // Distinguish a tracer failure (the scout DID find locations) from an angle
-        // that genuinely located nothing — otherwise the coverage line below lies.
-        log(`  ${angle.key}: located, but tracing failed — dropped`)
-        return null
-      }
-      return { angle: angle.key, lens: angle.lens, ...t }
-    })
-  },
+      { agentType: 'claude-swarm:tracer', label: `read:${angle.key}`, phase: 'Read', schema: THREAD },
+    ).then((t) => (t ? { angle: angle.key, lens: angle.lens, ...t } : null)),
+  ),
 )
 
 const found = threads.filter(Boolean)
 
 if (found.length === 0) {
   log('No angle produced a result.')
-  return { question, answer: 'Nothing found — every angle either located nothing or failed to trace.', threads: [] }
+  return { question, answer: 'Nothing found — every angle either located nothing or failed.', threads: [] }
 }
 
 if (found.length < angles.length) {
-  log(`Coverage: ${found.length}/${angles.length} angles returned — the rest found nothing or failed to trace.`)
+  log(`Coverage: ${found.length}/${angles.length} angles returned — the rest found nothing or failed.`)
 }
 
 phase('Synthesize')

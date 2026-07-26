@@ -60,7 +60,7 @@ const LEGACY_COPIES = ['survey.js', 'audit.js']
 // answers `Agent type '<name>' not found`. The main loop absorbs that error and does
 // the work itself — which looks, from outside, like the swarm silently refusing to
 // spawn.
-const ROSTER = ['scout', 'tracer', 'implementer', 'mechanic', 'verifier', 'scribe']
+const ROSTER = ['scout', 'tracer', 'implementer', 'mechanic', 'verifier', 'scribe', 'leaf']
 
 const notices = []
 
@@ -146,23 +146,23 @@ probe(() => {
 
 const POLICY = `# claude-swarm delegation policy
 
-Master = the main loop / a Workflow script on **Fable or Opus**. It orchestrates; a swarm
-of cheaper, specialized agents does the work below it. The goal is spending *less*,
-not spawning more.
+Three moves. Ask in order:
 
-## Fan out only when it pays
-Fan-out costs more total tokens than one agent doing the same work — it buys speed and
-coverage, not savings.
-- **Swarm:** audits/reviews, multi-file features, "find every X", migrations, mapping an
-  unfamiliar subsystem, anything touching 4+ files.
-- **Stay solo:** single-file edits, questions answerable from loaded context, <~3 files,
-  conversation. This is the actual cost control.
-
-## Always delegate bulk reading
-If answering needs >~3 files or >~500 lines, send \`claude-swarm:scout\` or
-\`claude-swarm:tracer\` rather than reading it into the main context — a summary that
-costs once beats source re-sent every turn. If the task instead needs context already
-loaded here, prefer a fork: it reuses the parent's prompt cache.
+1. **Shield — does this work need to leave the main context at all?** Judge by
+   volume of output, not difficulty. Main context is re-sent every turn: bulk
+   reading (>~3 files / >~500 lines), noisy commands, and wide searches go to an
+   agent returning a summary. Task needs context already loaded here? Prefer a
+   fork (reuses the prompt cache). Nothing to shield? Stay solo.
+2. **Route — what is the cheapest tier that can do it?** The cost lever. A cheaper
+   tier is safe only when something other than a model grades the output —
+   compiler, tests, linter — and the agent must run that grader itself before
+   returning. No grader → match the tier to the cost of a silent mistake.
+3. **Build — only then, should it fan out?** First: are branch reads and writes
+   disjoint? Shared input is re-bought per branch — one context reading it once
+   is always cheaper; fan-out is never cheaper at equal tier. Disjoint per-item
+   work fans out to buy wall time once the serial time removed beats the dispatch
+   round added; each chained wave adds a linear penalty. User invocation
+   overrides judgment, not arithmetic.
 
 ## The roster
 | Agent | Tier | For |
@@ -173,23 +173,21 @@ loaded here, prefer a fork: it reuses the parent's prompt cache.
 | claude-swarm:mechanic | sonnet·low | A decided change applied across N sites |
 | claude-swarm:verifier | sonnet·xhigh | Adversarial: refute the claim, run the thing |
 | claude-swarm:scribe | haiku | Docs, README, changelog, comments |
-Saved workflows: \`claude-swarm:survey\` (map an area), \`claude-swarm:audit\` (find,
-then adversarially verify).
+Saved workflows: \`claude-swarm:survey\` (map), \`claude-swarm:audit\` (adversarial
+review), \`claude-swarm:build\` (waves from a manifest).
 
 ## Rules
-- Ad-hoc \`Agent\` dispatch has concurrency and per-session ceilings and *fails* past
-  them; workflow \`agent()\` spawns queue instead. Route wide fan-outs through
-  \`claude-swarm:survey\`/\`audit\`.
+- Ad-hoc \`Agent\` dispatch *fails* past its concurrency/per-session ceilings;
+  workflow \`agent()\` spawns queue under their own per-run caps, outside the
+  session total. Route wide fan-outs through a workflow.
 - Agents can't delegate downward (nesting is off by default) — dispatch each from here.
 - No silent truncation — if a cap or sampling dropped coverage, say so.
-- Never downgrade the model writing production code, or the main loop.
+- Never downgrade the main loop, or code no grader will catch.
 - Verify before reporting done: run the build/tests, read the artifact on disk.
-- **Fable is opt-in only** — top of the ladder (haiku < sonnet < opus < fable). Never
-  route to it automatically; propose it only for a task Opus has actually failed.
+- **Fable is opt-in only** — top of the ladder (haiku < sonnet < opus < fable);
+  propose it only for a task Opus actually failed, never route to it yourself.
 
-Load the \`claude-swarm\` skill for the full orchestration playbook (how to author a
-Workflow inline, when to call \`claude-swarm:survey\`/\`claude-swarm:audit\`,
-model-routing rationale).`
+Load the \`claude-swarm\` skill for the full playbook.`
 
 const context =
   notices.length > 0

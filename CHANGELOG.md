@@ -7,6 +7,63 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html): the git tag
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-07-25
+
+Reframes the plugin around what the benchmark actually supports. The old pitch sold the
+swarm as cost control; the measurements said fan-out never saves money on work one context
+can do (it multiplies input tokens across uncached contexts), and the one multi-wave
+workflow measured lost to a solo run 3.95x on cost and 4.63x on wall time. What survives,
+measured or honestly labeled: keeping volume out of the main context (Shield), tier
+routing into graded environments (Route), and wide waves over genuinely disjoint work
+(Build). Every claim about harness behaviour was re-verified against the Claude Code docs
+(`workflows`, `sub-agents`, `hooks`, `plugins-reference`, `model-config`).
+
+### Changed
+- **The delegation policy and skill now ask three questions in order** instead of "should
+  I fan out": does the work need to leave the main context at all (volume, not
+  difficulty); what is the cheapest tier that can do it (safe only when something other
+  than a model — compiler, tests, linter — grades the output, and the agent runs that
+  grader itself); and only then, should it fan out. Fan-out sits behind a disjointness
+  gate: branches must not share reads *or* writes (shared input is re-bought per branch —
+  fan-out is never cheaper at equal tier), the wave must be wide enough to win on wall
+  time, and each chained wave adds a linear penalty. An explicit user invocation
+  overrides the judgment, not the arithmetic.
+- **`claude-swarm:survey` collapsed from three waves to one.** The shipped shape
+  (locate → trace → synthesize) bought the same files three times and measured 3.95x solo
+  cost at 4.63x wall time. Each angle is now a single locate-and-read agent, and a caller
+  who already knows the relevant files passes them as `files` to skip discovery. Labeled
+  honestly in the skill and its own `whenToUse`: a latency-and-shield play, not a cost
+  win — the angles still share their input.
+- **Workflow labels are honest and predictions are pre-registered.** `audit` is labeled a
+  quality play and *currently unmeasured*; `evals/README.md` records, before any
+  benchmark run, the prediction that audit loses to solo on cost (shared input) and the
+  quality prediction that has to hold for the label to survive.
+- **README rewritten** around the three modes, with the build expectation stated plainly:
+  the ceiling is the serial fraction, so ~2x over a solo draft is the realistic target.
+
+### Added
+- **`claude-swarm:build`** — the wide-wave workflow for drafting an app from a finalized
+  plan. The master writes the foundation, signature files, and a work manifest itself (a
+  serial foundation agent would re-buy a plan the master already holds); the workflow
+  validates the manifest with plain code before spending anything (exclusive ownership,
+  acyclic read/own graph, paths inside the project, shared files reserved for
+  integration), runs a wide Sonnet leaf wave with per-unit dependency gating, a
+  concurrency ceiling, and read-set batching (both exposed as dials), then integrates
+  split by grader: a sonnet mechanic re-derives state from the tree and fixes what the
+  compiler grades; only judgment calls escalate to opus.
+- **`claude-swarm:leaf`** — the turn-capped Sonnet agent the build wave runs. The cap is
+  load-bearing and its behaviour was measured, not assumed: a capped subagent returns
+  *silently* ("Subagent completed but returned no output.", no marker), so the workflow
+  records a missing structured return as `unknown` — never `failed` — and integration
+  trusts the tree, not the reports.
+- **A completion feed.** A SubagentStop hook (no matcher: it catches every agent rather
+  than enumerating types that would drift) appends timestamp, agent type, and final
+  message to `.claude-swarm-feed.log` in the project directory. It always exits 0 —
+  exit code 2 on SubagentStop would block the subagent from stopping.
+- **16 new smoke checks**: the manifest validator's rejection cases, leaf dependency
+  ordering and read-set batching, silent-leaf handling with tree-derived completion,
+  judgment escalation, and the feed hook's append and never-crash contracts. 46 total.
+
 ## [0.1.4] — 2026-07-25
 
 Cuts the cost of the `audit` workflow without moving its confirmation bar, and stops the

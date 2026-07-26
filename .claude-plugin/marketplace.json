@@ -9,7 +9,7 @@
     {
       "name": "claude-swarm",
       "source": "./",
-      "description": "Cost-tiered multi-agent delegation for Claude Code: Fable or Opus master, cheaper swarm below, fan out only when it pays.",
+      "description": "Context-shielding, cost-tiered delegation for Claude Code: subagents keep high-volume work out of the main context on the cheapest tier a grader can check; wide fan-out is a gated special case.",
       "category": "productivity",
       "keywords": ["agents", "orchestration", "swarm", "delegation"]
     }

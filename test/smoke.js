@@ -22,7 +22,7 @@
 const fs = require('fs')
 const os = require('os')
 const path = require('path')
-const { execFileSync } = require('child_process')
+const { execFileSync, spawnSync } = require('child_process')
 
 const root = path.resolve(__dirname, '..')
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8')
@@ -86,9 +86,61 @@ check('hooks.json registers a SessionStart command hook', () => {
   assert(/session-start\.js/.test(cmd.command), 'hook must invoke session-start.js')
 })
 
+check('hooks.json registers a SubagentStop feed hook with no matcher', () => {
+  const h = readJSON('hooks/hooks.json')
+  const ss = h.hooks && h.hooks.SubagentStop
+  assert(Array.isArray(ss) && ss.length >= 1, 'SubagentStop entry required')
+  // The feed catches everything, deliberately: no matcher rather than an
+  // enumerated agent-type list that would drift as the roster changes.
+  assert(!('matcher' in ss[0]), 'the feed must have no matcher (catch every agent)')
+  const cmd = ss[0].hooks && ss[0].hooks[0]
+  assert(cmd && cmd.type === 'command', 'hook must be type "command"')
+  assert(/subagent-stop\.js/.test(cmd.command), 'hook must invoke subagent-stop.js')
+})
+
 // --- 2. Hook script compiles (CommonJS — node --check is correct here) ------
 
 const HOOK = path.join(root, 'hooks/session-start.js')
+const FEED_HOOK = path.join(root, 'hooks/subagent-stop.js')
+
+check('hooks/subagent-stop.js is syntactically valid', () => {
+  execFileSync(process.execPath, ['--check', FEED_HOOK], { stdio: 'pipe' })
+})
+
+check('subagent-stop appends a feed line and exits 0', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-smoke-'))
+  try {
+    const res = spawnSync(process.execPath, [FEED_HOOK], {
+      input: JSON.stringify({
+        agent_type: 'claude-swarm:leaf',
+        last_assistant_message: 'done: header\nfilled and type-checked',
+        cwd: tmp,
+      }),
+      encoding: 'utf8',
+      env: { ...process.env, CLAUDE_PROJECT_DIR: tmp },
+    })
+    assert(res.status === 0, `must exit 0, got ${res.status}`)
+    const feed = fs.readFileSync(path.join(tmp, '.claude-swarm-feed.log'), 'utf8')
+    assert(/claude-swarm:leaf/.test(feed), 'agent type must appear in the feed line')
+    assert(/done: header filled/.test(feed), 'message must be flattened into the line')
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true })
+  }
+})
+
+check('subagent-stop swallows garbage input — exit 2 would block the subagent', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-smoke-'))
+  try {
+    const res = spawnSync(process.execPath, [FEED_HOOK], {
+      input: 'not json at all',
+      encoding: 'utf8',
+      env: { ...process.env, CLAUDE_PROJECT_DIR: tmp },
+    })
+    assert(res.status === 0, `must exit 0 on garbage input, got ${res.status}`)
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true })
+  }
+})
 
 check('hooks/session-start.js is syntactically valid', () => {
   execFileSync(process.execPath, ['--check', HOOK], { stdio: 'pipe' })
@@ -166,7 +218,7 @@ function hookContext({ seed = () => {}, env = {} } = {}) {
   }
 }
 
-const ROSTER = ['scout', 'tracer', 'implementer', 'mechanic', 'verifier', 'scribe']
+const ROSTER = ['scout', 'tracer', 'implementer', 'mechanic', 'verifier', 'scribe', 'leaf']
 const seedAgents = (names) => (tmp) => {
   fs.mkdirSync(path.join(tmp, 'agents'), { recursive: true })
   for (const n of names) fs.writeFileSync(path.join(tmp, 'agents', `${n}.md`), '# copy\n')
@@ -304,7 +356,7 @@ function extractMetaLiteral(src) {
   throw new Error('unbalanced braces in meta literal')
 }
 
-for (const wf of ['survey.js', 'audit.js']) {
+for (const wf of ['survey.js', 'audit.js', 'build.js']) {
   check(`workflows/${wf} body compiles`, () => {
     const src = read(`workflows/${wf}`)
     assert(/export\s+const\s+meta\s*=/.test(src), 'must begin with `export const meta =`')
@@ -414,9 +466,159 @@ checkAsync('audit still buckets a finding as unverified when its skeptics fail',
   assert(out.confirmed.length === 0, 'a failed skeptic must not confirm either')
 })
 
+// --- 3c. build.js: validator rejects bad manifests, waves run good ones -----
+
+/** Run build.js with a manifest; assert it was rejected with zero spawns. */
+async function buildViolations(manifest) {
+  let spawned = 0
+  const out = await runWorkflow('build.js', {
+    args: manifest,
+    onAgent: async () => {
+      spawned++
+      return null
+    },
+  })
+  assert(out.status === 'invalid-manifest', `expected invalid-manifest, got ${out.status}`)
+  assert(spawned === 0, 'an invalid manifest must spawn nothing')
+  return out.violations.join('\n')
+}
+
+const goodManifest = () => ({
+  typecheck: 'npx tsc --noEmit',
+  foundation: ['src/types.ts'],
+  units: [
+    { id: 'a', owns: ['src/a.ts'], reads: ['src/types.ts'], builds: 'component a' },
+    { id: 'b', owns: ['src/b.ts'], reads: ['src/types.ts', 'src/a.ts'], builds: 'component b' },
+  ],
+})
+
+checkAsync('build runs leaves in dependency order, then integration', async () => {
+  const labels = []
+  const out = await runWorkflow('build.js', {
+    args: goodManifest(),
+    onAgent: async (prompt, opts) => {
+      labels.push(opts.label)
+      if (opts.phase === 'Leaves') {
+        const ids = opts.label.replace('leaf:', '').split('+')
+        return { results: ids.map((id) => ({ unit: id, status: 'done', notes: '' })) }
+      }
+      return {
+        unitsVerified: [
+          { unit: 'a', filesPresent: true, nonEmpty: true },
+          { unit: 'b', filesPresent: true, nonEmpty: true },
+        ],
+        sharedFilesWritten: ['src/index.ts'],
+        fixed: [],
+        typecheck: 'pass',
+        judgment: [],
+      }
+    },
+  })
+  assert(out.status === 'complete', `expected complete, got ${out.status}`)
+  assert(out.units.every((u) => u.status === 'done'), 'both units must be done')
+  // b reads a's owned file, so its leaf must not dispatch before a settles.
+  assert(labels.indexOf('leaf:a') < labels.indexOf('leaf:b'), `leaf:a must precede leaf:b (${labels})`)
+  assert(labels.includes('integrate:mechanic'), 'integration must run')
+})
+
+checkAsync('build batches units with an identical read-set into one leaf', async () => {
+  let leafCalls = 0
+  const m = {
+    typecheck: 'tsc',
+    foundation: ['src/types.ts'],
+    units: [
+      { id: 'a', owns: ['src/a.ts'], reads: ['src/types.ts'], builds: 'a' },
+      { id: 'b', owns: ['src/b.ts'], reads: ['src/types.ts'], builds: 'b' },
+    ],
+    batch: 2,
+  }
+  await runWorkflow('build.js', {
+    args: m,
+    onAgent: async (prompt, opts) => {
+      if (opts.phase === 'Leaves') {
+        leafCalls++
+        return { results: ['a', 'b'].map((id) => ({ unit: id, status: 'done', notes: '' })) }
+      }
+      return {
+        unitsVerified: [
+          { unit: 'a', filesPresent: true, nonEmpty: true },
+          { unit: 'b', filesPresent: true, nonEmpty: true },
+        ],
+        sharedFilesWritten: [],
+        fixed: [],
+        typecheck: 'pass',
+        judgment: [],
+      }
+    },
+  })
+  assert(leafCalls === 1, `batch=2 with one shared read-set must mean 1 leaf agent, got ${leafCalls}`)
+})
+
+checkAsync('build treats a silent leaf as unknown, integrates from the tree, escalates judgment', async () => {
+  const labels = []
+  const out = await runWorkflow('build.js', {
+    args: { typecheck: 'tsc', foundation: [], units: [{ id: 'a', owns: ['src/a.ts'], reads: [], builds: 'a' }] },
+    onAgent: async (prompt, opts) => {
+      labels.push(opts.label)
+      // The measured behavior: a turn-capped leaf returns nothing, with no marker.
+      if (opts.phase === 'Leaves') return null
+      if (opts.label === 'integrate:mechanic')
+        return {
+          unitsVerified: [{ unit: 'a', filesPresent: true, nonEmpty: true }],
+          sharedFilesWritten: [],
+          fixed: ['import path in src/a.ts'],
+          typecheck: 'pass',
+          judgment: [{ issue: 'prop type contradicts the route contract', where: 'src/a.ts:12' }],
+        }
+      return 'resolved: widened the prop type, typecheck passes'
+    },
+  })
+  assert(out.units[0].status === 'unknown', `a silent leaf must be unknown, got ${out.units[0].status}`)
+  assert(labels.includes('integrate:judgment'), 'judgment items must escalate to opus')
+  // The tree said the files are present and filled — leaf silence must not fail the run.
+  assert(out.status === 'complete', `tree-verified run must be complete, got ${out.status}`)
+})
+
+checkAsync('build rejects a path owned by two units', async () => {
+  const m = goodManifest()
+  m.units[1].owns = ['src/a.ts']
+  m.units[1].reads = ['src/types.ts']
+  assert(/owned by more than one unit/.test(await buildViolations(m)), 'violation must name the collision')
+})
+
+checkAsync('build rejects a read/own dependency cycle', async () => {
+  const m = goodManifest()
+  m.units[0].reads = ['src/types.ts', 'src/b.ts']
+  assert(/dependency cycle/.test(await buildViolations(m)), 'violation must name the cycle')
+})
+
+checkAsync('build rejects a path escaping the project', async () => {
+  const m = goodManifest()
+  m.units[0].owns = ['../evil.ts']
+  assert(/escapes the project/.test(await buildViolations(m)), 'violation must name the escape')
+})
+
+checkAsync('build rejects a read that nothing provides', async () => {
+  const m = goodManifest()
+  m.units[0].reads = ['src/ghost.ts']
+  assert(/neither in foundation nor owned/.test(await buildViolations(m)), 'violation must name the ghost read')
+})
+
+checkAsync('build rejects a unit owning a shared file reserved for integration', async () => {
+  const m = goodManifest()
+  m.units[0].owns = ['src/index.ts']
+  assert(/reserved for integration/.test(await buildViolations(m)), 'violation must name the reserved file')
+})
+
+checkAsync('build rejects a unit owning a foundation file', async () => {
+  const m = goodManifest()
+  m.units[0].owns = ['src/types.ts']
+  assert(/owns a foundation file/.test(await buildViolations(m)), 'violation must name the foundation collision')
+})
+
 // --- 4. Agents and skill have usable frontmatter ---------------------------
 
-const EXPECTED_AGENTS = ['scout', 'tracer', 'implementer', 'mechanic', 'verifier', 'scribe']
+const EXPECTED_AGENTS = ['scout', 'tracer', 'implementer', 'mechanic', 'verifier', 'scribe', 'leaf']
 
 function frontmatter(src) {
   const m = /^---\r?\n([\s\S]*?)\r?\n---/.exec(src)
