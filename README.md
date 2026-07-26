@@ -280,6 +280,11 @@ from a marketplace or loaded with `--plugin-dir`. Two consequences worth knowing
 defaults; and with two sessions on *different* copies of the plugin, the last session
 to start owns the breadcrumb, so both panels render that copy's renderer.
 
+Reported upstream as
+[anthropics/claude-code#81320](https://github.com/anthropics/claude-code/issues/81320).
+If the substitution ever lands in plugin settings, the breadcrumb can go and the
+`${CLAUDE_PLUGIN_ROOT}` form above comes back.
+
 If the rows show no `m:ss` clock and no context bar, the renderer isn't running and
 you're seeing Claude Code's defaults. To pin it explicitly instead, copy
 `scripts/subagent-statusline.js` somewhere stable and point the same setting at your
