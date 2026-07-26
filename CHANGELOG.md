@@ -7,6 +7,72 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html): the git tag
 
 ## [Unreleased]
 
+**First live run of the swarm display, and both of 0.2.2's open risks resolved — one
+of them against us.** Nothing outside the two status line scripts, their tests, and
+their docs changed; the shakedown protocol and the pre-registered predictions are
+still untouched.
+
+### Added
+- **A once-per-second segment on the main status line**, the only part of the display
+  that can move faster than 5s: `claude-swarm 2H 5S 1O · oldest 1:23`. The subagent
+  renderer now caches the longest-running agent's raw `startTime` alongside the tier
+  counts, and the segment recomputes the clock on its own tick — a stored elapsed
+  would visibly freeze for four ticks out of five. Verified by running the segment
+  twice 1.2s apart with no cache write in between: `1:35` → `1:36`.
+- **A compose recipe in the README for anyone who already has a status line.** Only
+  one `statusLine` wins, so the entry feeds the same stdin to both commands and prints
+  this segment on its own line — the main status line renders multi-line output as a
+  column, and this script prints nothing while no subagents run. Also flags that
+  `refreshInterval: 1` re-runs *both* commands every second.
+- The segment's label is branded once, on that line, rather than per row: with no
+  agent identity in the payload, an individual row cannot honestly claim to be a
+  claude-swarm agent.
+
+### Fixed
+- **The badge names the model tier instead of the agent, because the payload carries
+  no agent identity.** Captured live from Claude Code 2.1.220: every row's `type` is
+  the constant `"local_agent"`, `name` is **absent** (the builder fills it from Claude
+  Code's agent-name registry — a user-assigned name, not the agent type — and
+  Task-dispatched subagents have no entry), and `label`/`description` carry the
+  caller's Task description. A scout, a tracer and a leaf are indistinguishable. The previous
+  renderer matched `task.type`/`task.name` against scoped roster names, matched
+  nothing, and silently rendered **no rows at all** — the panel showed Claude Code's
+  defaults and looked merely unstyled. Rows now badge `HAIKU`/`SONNET`/`OPUS` from
+  `model`, name an off-ladder model for what it is (`FABLE`), and say `AGENT` while the
+  model is unresolved. A smoke check now renders a verbatim captured payload, so a
+  return to name-matching fails in the suite rather than in a live wave.
+- **Retired the red anomaly.** Bright red marked "a `leaf` resolved off Sonnet", the
+  void condition of the build prediction in `evals/README.md`. Identifying a leaf
+  requires an identity the payload does not have, so the alarm cannot fire and is gone
+  rather than faked — from the rows, from the aggregate counts, and from the main-line
+  segment. The build prediction still needs a check; the subagent panel is not it.
+- **Every subagent row is rendered, not only this plugin's.** Filtering to swarm rows
+  required the same missing identity, so the rows stay tier-generic instead of claiming
+  ownership they cannot verify.
+
+- **A row no longer overflows a panel narrower than its own badge.** The badge is
+  fixed at 8 visible columns and never drops, so `columns: 5` rendered an 8-wide row —
+  found by an adversarial pass, not by the suite, whose narrow-columns check stopped
+  at 14. The badge now clips to the width it was handed; the check covers 8, 5 and 3.
+
+### Changed
+- **The panel's refresh cadence is fixed at 5 seconds and documented as such.** Read
+  out of the Claude Code 2.1.220 binary: the subagent panel ticks on a hardcoded
+  5000ms timer (first tick at 300ms), and the `subagentStatusLine` settings object is
+  `{type, command}` only — `refreshInterval` (min 1s) belongs to the main `statusLine`
+  and cannot speed this up, since that segment reads a cache written on the same 5s
+  tick. Elapsed therefore steps in 5s jumps. The reader's 10s staleness cutoff is
+  exactly two ticks, which is now a measured number rather than a guess.
+- **Enabling the subagent panel is documented as a manual step.** The plugin's shipped
+  `subagentStatusLine` default does not take effect on 2.1.220: under the plugin
+  default alone the renderer never ran across 60s and two live agents (its per-session
+  aggregate cache was never written), while the identical script registered by absolute
+  path in project settings wrote the cache within one second. Whether
+  `${CLAUDE_PLUGIN_ROOT}` fails to substitute there or the key is not honored from a
+  plugin at all is still unseparated. The README's "there is nothing to configure" was
+  wrong and now carries the manual settings block plus the symptom to look for: no
+  `m:ss` and no context bar means the renderer isn't running.
+
 ## [0.2.2] — 2026-07-26
 
 **Display-only, safe before the shakedown.** Everything here reads data Claude Code

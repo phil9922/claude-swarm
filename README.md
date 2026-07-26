@@ -206,44 +206,83 @@ goes quiet as soon as it exists.
 
 ### Live swarm display
 
-While a wave runs, the agent panel below the prompt shows one colored row per swarm
-agent. The plugin ships this by default — plugin `settings.json` may carry the
-[`subagentStatusLine`](https://code.claude.com/docs/en/statusline#subagent-status-lines)
-key — so there is nothing to configure:
+While a wave runs, the agent panel below the prompt shows one row per running
+subagent, badged by the model it resolved to:
 
 ```
-  LEAF    PriceBreakdown          1:24  ███░░░░░ 42%
-  LEAF    SplitEditor             0:51  █░░░░░░░ 18%
-  IMPL    integration             2:03  ██████░░ 71%
+  SONNET  Fill PriceBreakdown     1:24  ███░░░░░ 42%
+  HAIKU   find call sites         0:51  █░░░░░░░ 18%
+  OPUS    Wire the integration    2:03  ██████░░ 71%
 ```
 
-**Background color encodes the model tier, not the agent name.** In a build wave
-every row is `claude-swarm:leaf`, so per-agent color would convey nothing; tier is
-the thing this plugin routes on, and the wave reads as a cost heat map:
+**The badge names the model tier, because that is the only identity the payload
+carries.** Measured on Claude Code 2.1.220: every row's `type` is the constant
+`"local_agent"`, `name` is absent (it comes from the agent-name registry — a
+user-assigned name, not the agent type — and Task-dispatched subagents have no
+entry), and `label`/`description` hold the description the caller passed to the Task
+tool. Nothing says which agent a row is. Tier is what this plugin routes on anyway,
+so the wave still reads as a cost heat map:
 
 | Badge | Meaning |
 |---|---|
 | bright cyan | Haiku — cheap / cool |
 | bright green | Sonnet — the workhorse |
 | bright yellow | Opus — expensive / warm |
-| **bright red** | **anomaly**: a `leaf` resolved to anything other than Sonnet — the void condition of the build prediction in `evals/README.md`. It should look *wrong*, not merely expensive. |
+| neutral (reverse video) | model not resolved yet (`AGENT`), or resolved off the three routed tiers — named for what it is, e.g. `FABLE` |
 
-A task whose model isn't resolved yet gets a neutral (reverse-video) badge rather
-than a guessed tier. Elapsed time uses weight, not color — dim when young, bold when
-approaching the leaf turn cap — so it never fights the tier badge. When the panel is
-narrow the context bar drops first, then the label, then elapsed; the badge never
-drops. Rows for agents that aren't ours are left on Claude Code's default rendering.
+Elapsed time uses weight, not color — dim when young, bold when long-running — so it
+never fights the tier badge. When the panel is narrow the context bar drops first,
+then the label, then elapsed; the badge never drops. A finished row keeps its badge
+but drops the clock and bar: the payload has `startTime` and no end time, so elapsed
+on a terminal row would be a clock still counting after the agent stopped.
 
-Per-row `model` and `contextWindowSize` need Claude Code **v2.1.205+**; on older
-versions the rows degrade to badge + label + elapsed. The same gates as the rest of
-the plugin apply: the workspace trust dialog must be accepted, and `disableAllHooks`
+Because rows can't be attributed, **every** subagent row is rendered, not only this
+plugin's. **Rows update every 5 seconds** and no faster: Claude Code 2.1.220 ticks the
+panel on a hardcoded 5000ms timer (first tick at 300ms), and the `subagentStatusLine`
+settings object accepts only `type` and `command` — `refreshInterval` belongs to the
+main `statusLine`. The clock therefore steps in 5s jumps. Per-row `model` and
+`contextWindowSize` need Claude Code **v2.1.205+**; on
+older versions the rows degrade to badge + label + elapsed. The same gates as the rest
+of the plugin apply: the workspace trust dialog must be accepted, and `disableAllHooks`
 disables status lines too.
+
+**Enabling it is currently a manual step.** The plugin ships a `subagentStatusLine`
+default in its `settings.json`, but on Claude Code 2.1.220 that default does not take
+effect — verified by capture: under the plugin default alone the renderer never runs,
+while the identical script registered by absolute path in user or project settings
+runs on the next tick. Until that resolves, register it yourself:
+
+```json
+{
+  "subagentStatusLine": {
+    "type": "command",
+    "command": "node ~/.claude/subagent-statusline.js"
+  }
+}
+```
+
+Copy `scripts/subagent-statusline.js` next to it the same way as the aggregate
+segment below — `${CLAUDE_PLUGIN_ROOT}` is not available in your own settings, and the
+plugin's install path changes on every update. If the rows show no `m:ss` clock and no
+context bar, the renderer isn't running and you're seeing Claude Code's defaults.
 
 ### Post-install: aggregate count on the main status line
 
-A compact `swarm 2H 5S 1O` segment — running swarm agents by tier, same colors, red
-only for anomalies — can sit in your main status line. This one is a manual step for
-two documented reasons:
+A compact `claude-swarm 2H 5S 1O · oldest 1:23` segment — running subagents by tier,
+same colors, `?` for models not resolved or off the routed tiers, plus the
+longest-running agent's clock — can sit in your main status line.
+
+**This is the only part of the display that moves every second.** The subagent panel
+is stuck on Claude Code's hardcoded 5s tick, but the main status line honors
+`refreshInterval: 1`, and this segment recomputes the clock from a raw start timestamp
+on every tick instead of reprinting a stored elapsed — so the seconds advance smoothly
+between the 5s cache writes behind them.
+
+The label is branded once, here, rather than on each row above: the subagent payload
+carries no agent identity, so an individual row cannot honestly claim to be a
+claude-swarm agent.
+
+It is a manual step for two documented reasons:
 
 - A plugin's `settings.json` cannot ship `statusLine` — "Only the `agent` and
   `subagentStatusLine` keys are currently supported" (plugins reference).
@@ -264,9 +303,7 @@ cp /path/to/claude-swarm/scripts/swarm-statusline.js ~/.claude/
 (Any clone of this repo works as the source; so does the installed plugin directory —
 ask Claude for its path — as long as you *copy* out of it.)
 
-Then add to `~/.claude/settings.json` (or compose it into an existing status line
-script by appending its output — it prints one segment, no newline, and prints
-nothing while no swarm agents run):
+Then add to `~/.claude/settings.json`:
 
 ```json
 {
@@ -278,10 +315,29 @@ nothing while no swarm agents run):
 }
 ```
 
-`refreshInterval: 1` matters: the event-driven status line triggers go quiet exactly
-when this display matters most — "The event-driven triggers can go quiet when the
-main session is idle, for example while a coordinator waits on background subagents"
-(statusline docs). The status line runs locally and consumes no API tokens.
+**Already have a status line?** Only one `statusLine` wins, so compose instead of
+replacing: feed the same stdin to both and print this segment on its own line when it
+has something to say (the main status line renders multiple lines as a column, and
+this script prints nothing at all while no subagents run).
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "in=$(cat); a=$(printf '%s' \"$in\" | node ~/.claude/your-statusline.js); b=$(printf '%s' \"$in\" | node ~/.claude/swarm-statusline.js); if [ -n \"$b\" ]; then printf '%s\\n%s' \"$a\" \"$b\"; else printf '%s' \"$a\"; fi",
+    "refreshInterval": 1
+  }
+}
+```
+
+Note that `refreshInterval: 1` re-runs *both* commands every second, so a slow
+existing status line becomes a once-per-second cost.
+
+`refreshInterval: 1` matters twice over: it is what makes the clock tick per second,
+and without it the event-driven triggers go quiet exactly when this display matters
+most — "The event-driven triggers can go quiet when the main session is idle, for
+example while a coordinator waits on background subagents" (statusline docs). The
+status line runs locally and consumes no API tokens.
 
 ## Cost model
 

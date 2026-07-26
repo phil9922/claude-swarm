@@ -850,25 +850,28 @@ function runStatusline(script, stdin, tmpdir) {
   })
 }
 
+// Shaped after a payload captured live from Claude Code 2.1.220: `type` is the
+// constant "local_agent" on every row, there is no `name` field, and label /
+// description carry the caller's Task description — never a roster name. Rows
+// therefore cannot be attributed to an agent, only to a model tier.
 const SL_TASKS = {
   session_id: 'smoke-sess',
   columns: 100,
   tasks: [
-    { id: 't-leaf', type: 'claude-swarm:leaf', label: 'PriceBreakdown', status: 'running',
+    { id: 't-sonnet', type: 'local_agent', label: 'Fill PriceBreakdown', status: 'running',
       startTime: Date.now() - 84000, model: 'claude-sonnet-5', contextWindowSize: 200000, tokenCount: 84000 },
-    { id: 't-anom', type: 'claude-swarm:leaf', label: 'SplitEditor', status: 'running',
-      startTime: Date.now() - 51000, model: 'claude-opus-5', contextWindowSize: 200000, tokenCount: 36000 },
-    { id: 't-scout', type: 'claude-swarm:scout', description: 'find call sites', status: 'running',
-      startTime: Date.now() - 5000, model: 'claude-haiku-4-5-20251001', contextWindowSize: 200000, tokenCount: 9000 },
-    { id: 't-impl', type: 'claude-swarm:implementer', label: 'integration', status: 'running',
+    { id: 't-opus', type: 'local_agent', label: 'Wire the integration', status: 'running',
       startTime: Date.now() - 123000, model: 'claude-opus-5', contextWindowSize: 200000, tokenCount: 142000 },
-    { id: 't-nomodel', type: 'claude-swarm:tracer', label: 'wiring', status: 'running',
+    { id: 't-haiku', type: 'local_agent', description: 'find call sites', status: 'running',
+      startTime: Date.now() - 5000, model: 'claude-haiku-4-5-20251001', contextWindowSize: 200000, tokenCount: 9000 },
+    { id: 't-nomodel', type: 'local_agent', label: 'wiring', status: 'running',
       startTime: Date.now() - 2000 },
-    { id: 't-other', name: 'Explore', status: 'running', startTime: Date.now(), model: 'claude-haiku-4-5-20251001' },
+    { id: 't-fable', type: 'local_agent', label: 'top of the ladder', status: 'running',
+      startTime: Date.now() - 9000, model: 'claude-fable-5', contextWindowSize: 200000, tokenCount: 20000 },
   ],
 }
 
-check('subagent statusline renders tier badges, red only for the off-Sonnet leaf', () => {
+check('subagent statusline badges every row by model tier', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-sl-'))
   const res = runStatusline(SUB_SL, JSON.stringify(SL_TASKS), tmp)
   assert(res.status === 0, `must exit 0, got ${res.status}`)
@@ -878,24 +881,28 @@ check('subagent statusline renders tier badges, red only for the off-Sonnet leaf
     const o = JSON.parse(line) // every stdout line must be a {"id","content"} object
     rows[o.id] = o.content
   }
-  assert(!('t-other' in rows), 'non-swarm tasks must keep the default rendering (id omitted)')
-  assert(/\x1b\[102;30m/.test(rows['t-leaf']) && /LEAF/.test(rows['t-leaf']), 'Sonnet leaf gets the green badge')
-  assert(/1:24/.test(rows['t-leaf']), 'elapsed renders m:ss from startTime')
-  assert(/42%/.test(rows['t-leaf']), 'context bar percentage from tokenCount/contextWindowSize')
-  assert(/\x1b\[101;97m/.test(rows['t-anom']), 'a leaf resolved off Sonnet gets the red anomaly badge')
-  assert(!/\x1b\[103;30m/.test(rows['t-anom']), 'the anomaly badge replaces the Opus badge, not joins it')
-  assert(/\x1b\[106;30m/.test(rows['t-scout']) && /SCOUT/.test(rows['t-scout']), 'Haiku agent gets the cyan badge')
-  assert(/\x1b\[103;30m/.test(rows['t-impl']), 'Opus agent gets the yellow badge')
+  assert(Object.keys(rows).length === SL_TASKS.tasks.length, 'every row renders: none can be attributed, so none is filtered')
+  assert(/\x1b\[102;30m/.test(rows['t-sonnet']) && /SONNET/.test(rows['t-sonnet']), 'Sonnet gets the green badge')
+  assert(/1:24/.test(rows['t-sonnet']), 'elapsed renders m:ss from startTime')
+  assert(/42%/.test(rows['t-sonnet']), 'context bar percentage from tokenCount/contextWindowSize')
+  assert(/\x1b\[106;30m/.test(rows['t-haiku']) && /HAIKU/.test(rows['t-haiku']), 'Haiku gets the cyan badge')
+  assert(/\x1b\[103;30m/.test(rows['t-opus']) && /OPUS/.test(rows['t-opus']), 'Opus gets the yellow badge')
+  assert(!/\x1b\[101;97m/.test(res.stdout), 'no row may claim red: the anomaly it marked is not derivable from this payload')
+  const fable = rows['t-fable']
+  assert(/FABLE/.test(fable), 'a model off the three routed tiers is named, not shrugged at')
+  assert(!/\x1b\[10[236];30m/.test(fable), 'and it is not colored as one of the three')
   const noModel = rows['t-nomodel']
-  assert(noModel && /TRACE/.test(noModel), 'model-absent task still renders a row')
-  for (const bg of ['\x1b[106;30m', '\x1b[102;30m', '\x1b[103;30m', '\x1b[101;97m']) {
+  assert(noModel && /AGENT/.test(noModel), 'a task whose model has not resolved still renders a row')
+  for (const bg of ['\x1b[106;30m', '\x1b[102;30m', '\x1b[103;30m']) {
     assert(!noModel.includes(bg), 'model absent → no tier badge that would be a guess')
   }
 })
 
 check('subagent statusline honors the drop order under narrow columns', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-sl-'))
-  for (const columns of [30, 14]) {
+  // 5 and 3 are below the badge's own 8 visible columns: the badge still never
+  // drops, but it clips rather than overflowing the width it was handed.
+  for (const columns of [30, 14, 8, 5, 3]) {
     const res = runStatusline(SUB_SL, JSON.stringify({ ...SL_TASKS, columns }), tmp)
     assert(res.status === 0, `must exit 0 at columns=${columns}`)
     for (const line of res.stdout.trim().split('\n')) {
@@ -908,26 +915,29 @@ check('subagent statusline honors the drop order under narrow columns', () => {
   }
 })
 
-check('subagent statusline survives a bare-name identity, but reserves red for scoped', () => {
+check('subagent statusline renders the payload Claude Code actually sends', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-sl-'))
-  // The tasks array's identity field shape is unspecified; a bare roster name
-  // must still badge rather than no-op the whole feature.
-  const bare = {
-    session_id: 'bare', columns: 100,
-    tasks: [
-      { id: 'x', name: 'mechanic', label: 'rename', status: 'running', startTime: Date.now(), model: 'claude-sonnet-5' },
-      { id: 'y', name: 'leaf', label: 'not ours', status: 'running', startTime: Date.now(), model: 'claude-opus-5' },
-    ],
+  // Verbatim from a live 2.1.220 capture, minus tokenSamples: no identity field
+  // of any kind. An earlier renderer matched on task.type/name expecting a scoped
+  // roster name, found none, and silently rendered nothing at all — this check
+  // exists so a return to name-matching fails here instead of in a live wave.
+  const realShape = {
+    session_id: 'real', transcript_path: '/tmp/t.jsonl', cwd: '/repo', prompt_id: 'p1', columns: 148,
+    tasks: [{
+      id: 'a009e10f568045d3d', type: 'local_agent', status: 'running',
+      description: 'Count evals files', label: 'Count evals files',
+      startTime: Date.now() - 65000, model: 'claude-haiku-4-5-20251001',
+      contextWindowSize: 200000, tokenCount: 9431, cwd: '/repo',
+    }],
   }
-  const res = runStatusline(SUB_SL, JSON.stringify(bare), tmp)
-  const rows = {}
-  for (const line of res.stdout.trim().split('\n')) {
-    const o = JSON.parse(line)
-    rows[o.id] = o.content
-  }
-  assert(/MECH/.test(rows['x'] || ''), 'a bare roster name still renders a badge')
-  assert(!/\x1b\[101;97m/.test(rows['y'] || ''), 'an unscoped "leaf" must not fire the anomaly alarm')
-  assert(/\x1b\[103;30m/.test(rows['y'] || ''), 'it gets the ordinary Opus badge instead')
+  const res = runStatusline(SUB_SL, JSON.stringify(realShape), tmp)
+  assert(res.status === 0, 'must exit 0')
+  assert(res.stdout.trim() !== '', 'the real payload must produce a row, not silence')
+  const row = JSON.parse(res.stdout.trim())
+  assert(row.id === 'a009e10f568045d3d', 'the row is keyed by the task id')
+  assert(/HAIKU/.test(row.content) && /1:05/.test(row.content), 'tier badge and clock both render')
+  const agg = JSON.parse(fs.readFileSync(path.join(tmp, 'claude-swarm-status-real.json'), 'utf8'))
+  assert(agg.counts.haiku === 1, 'and it counts toward the aggregate')
 })
 
 check('subagent statusline drops the clock on a finished task', () => {
@@ -936,12 +946,12 @@ check('subagent statusline drops the clock on a finished task', () => {
   // clock still counting after the agent stopped.
   const done = {
     session_id: 'done', columns: 100,
-    tasks: [{ id: 'd', type: 'claude-swarm:leaf', label: 'Finished', status: 'completed',
+    tasks: [{ id: 'd', type: 'local_agent', label: 'Finished', status: 'completed',
       startTime: Date.now() - 90000, model: 'claude-sonnet-5', contextWindowSize: 200000, tokenCount: 50000 }],
   }
   const res = runStatusline(SUB_SL, JSON.stringify(done), tmp)
   const row = JSON.parse(res.stdout.trim()).content
-  assert(/LEAF/.test(row), 'a finished row keeps its tier badge')
+  assert(/SONNET/.test(row), 'a finished row keeps its tier badge')
   assert(!/\d:\d\d/.test(stripAnsi(row)), 'no elapsed clock on a terminal row')
   assert(!/█|░/.test(row), 'no stale context bar on a terminal row')
   const agg = JSON.parse(fs.readFileSync(path.join(tmp, 'claude-swarm-status-done.json'), 'utf8'))
@@ -959,10 +969,14 @@ check('subagent statusline writes the per-session aggregate cache', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-sl-'))
   runStatusline(SUB_SL, JSON.stringify(SL_TASKS), tmp)
   const agg = JSON.parse(fs.readFileSync(path.join(tmp, 'claude-swarm-status-smoke-sess.json'), 'utf8'))
-  assert(agg.counts.sonnet === 1, 'one running Sonnet leaf')
+  assert(agg.counts.sonnet === 1, 'one running Sonnet')
   assert(agg.counts.haiku === 1 && agg.counts.opus === 1, 'one Haiku, one Opus')
-  assert(agg.counts.anomaly === 1, 'the off-Sonnet leaf counts as an anomaly, not as Opus')
-  assert(agg.counts.unresolved === 1, 'the model-absent task counts as unresolved')
+  assert(!('anomaly' in agg.counts), 'no anomaly count: the payload cannot identify a leaf')
+  assert(agg.counts.unresolved === 2, 'model-absent and off-ladder models both count as unresolved')
+  // A raw timestamp, not an elapsed value: the reader ticks 5x more often than
+  // this cache is written and must be able to advance the clock itself.
+  const oldestTask = Math.min(...SL_TASKS.tasks.map((t) => t.startTime))
+  assert(agg.oldestStart === oldestTask, `oldestStart is the longest-running task's startTime, got ${agg.oldestStart}`)
 })
 
 check('main statusline segment reads the cache, goes quiet when stale or absent', () => {
@@ -975,9 +989,13 @@ check('main statusline segment reads the cache, goes quiet when stale or absent'
   const live = runStatusline(MAIN_SL, stdin, tmp)
   assert(live.status === 0, 'must exit 0 with a live cache')
   const seg = stripAnsi(live.stdout)
-  assert(/swarm/.test(seg), 'segment carries the swarm label')
-  assert(/1S/.test(seg) && /1H/.test(seg) && /1O/.test(seg) && /1!/.test(seg), `all tiers counted, got "${seg}"`)
-  assert(/\x1b\[101;97m/.test(live.stdout), 'anomaly count renders in red')
+  assert(/claude-swarm/.test(seg), 'segment carries the claude-swarm label, branded once')
+  assert(!/claude-swarm.*claude-swarm/.test(seg), 'and only once — the chips are not individually branded')
+  // The oldest task in the fixture started 123s ago; the segment must derive the
+  // clock from the cached timestamp rather than reprinting a stored elapsed.
+  assert(/· oldest 2:0\d/.test(seg), `clock comes from oldestStart, got "${seg}"`)
+  assert(/1S/.test(seg) && /1H/.test(seg) && /1O/.test(seg) && /2\?/.test(seg), `all tiers counted, got "${seg}"`)
+  assert(!/\x1b\[101;97m/.test(live.stdout), 'no red chip: the anomaly it counted is not derivable')
 
   const cache = path.join(tmp, 'claude-swarm-status-smoke-sess.json')
   const past = new Date(Date.now() - 60000)
