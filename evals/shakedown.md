@@ -88,10 +88,22 @@ src/tokens.css.
 ## Run procedure
 
 **0. Preconditions (both arms).**
-- Two identical scaffolds, prepared *before* any timing: `npm create vite@latest
-  ledgerline-solo -- --template react-ts` (and `ledgerline-build`), `npm install` in
-  each, `PLAN.md` copied in, `git init && git add -A && git commit` so rework is
-  diffable. Dependency install must not pollute the timing of either arm.
+- Two shell variables, set once in every terminal used for the run. Every command
+  below refers to them, so nothing has to be hand-substituted mid-protocol:
+
+  ```bash
+  export SWARM=/absolute/path/to/the/claude-swarm/repo   # the working tree, not the installed copy
+  export RUN_ROOT=~/shakedown                            # anywhere outside $SWARM
+  mkdir -p "$RUN_ROOT"
+  ```
+
+  `$RUN_ROOT` must be **outside** `$SWARM`: a scaffold inside the repo would put the
+  arms' own source under the plugin's git tree and into `git diff --stat`.
+- Two identical scaffolds, prepared *before* any timing, both directly under
+  `$RUN_ROOT`: `cd "$RUN_ROOT" && npm create vite@latest ledgerline-solo --
+  --template react-ts` (and `ledgerline-build`), `npm install` in each, `PLAN.md`
+  copied in, `git init && git add -A && git commit` so rework is diffable. Dependency
+  install must not pollute the timing of either arm.
 - `echo ${CLAUDE_CODE_SUBAGENT_MODEL:-unset}` must print `unset` (or `inherit`) — any
   other value voids the tier pins, and the plugin's SessionStart hook warns about
   exactly this.
@@ -104,24 +116,24 @@ src/tokens.css.
   plugin's own policy still reaches the build arm via the SessionStart hook and
   the skill, so this costs it nothing it is meant to have.
 - **Disable the installed plugin on BOTH arms** with
-  `--settings /path/to/claude-swarm/evals/arms/plugins-off.json` (every command below
+  `--settings "$SWARM/evals/arms/plugins-off.json"` (every command below
   carries it). The machine has claude-swarm installed from the marketplace at an older
   version; without this, the build arm loads **two copies** — two rosters, two
   SessionStart hooks injecting two different policies — and the solo arm silently gets
   the installed policy and roster, which makes it not a solo baseline. This is the
   same "never two copies at once" guarantee the eval harness has.
-- Load the plugin from the working tree with `--plugin-dir /path/to/claude-swarm`
+- Load the plugin from the working tree with `--plugin-dir "$SWARM"`
   (the eval harness's guarantee: you measure the tree, not an installed copy).
 
 **1. Solo arm first** — the controlled baseline. The historical "60–90 minutes"
 figure is uncontrolled and does not substitute for this arm.
 
 ```bash
-cd ledgerline-solo
+cd "$RUN_ROOT/ledgerline-solo"
 time CLAUDE_CODE_DISABLE_CLAUDE_MDS=1 claude -p "$(cat PLAN.md)
 
 Implement the entire plan now, solo. Run npx tsc --noEmit and fix all errors, then npm run build, before finishing." \
-  --settings /path/to/claude-swarm/evals/arms/plugins-off.json \
+  --settings "$SWARM/evals/arms/plugins-off.json" \
   --model opus --effort high --max-turns 200 --output-format json \
   --allowedTools Read Write Edit Glob Grep Bash > ../solo.json
 ```
@@ -134,10 +146,10 @@ is a claim, not evidence).
 cost prediction rather than falsifying it — cheaper to catch now than after:
 
 ```bash
-cd ledgerline-build
+cd "$RUN_ROOT/ledgerline-build"
 CLAUDE_CODE_DISABLE_CLAUDE_MDS=1 claude -p 'Spawn the claude-swarm:leaf subagent with the task: "reply done". Report what it said.' \
-  --settings /path/to/claude-swarm/evals/arms/plugins-off.json \
-  --plugin-dir /path/to/claude-swarm --model opus --max-turns 6 \
+  --settings "$SWARM/evals/arms/plugins-off.json" \
+  --plugin-dir "$SWARM" --model opus --max-turns 6 \
   --allowedTools Task --output-format json | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const o=JSON.parse(s);console.log(Object.keys(o.modelUsage||{}))})"
 ```
 
@@ -149,19 +161,44 @@ instruction (this is the same `armPrompts` pattern the eval harness documents �
 extra instruction *is* the intervention):
 
 ```bash
-cd ledgerline-build
+cd "$RUN_ROOT/ledgerline-build"
 time CLAUDE_CODE_DISABLE_CLAUDE_MDS=1 claude -p "$(cat PLAN.md)
 
 Build this with the claude-swarm build flow: load the claude-swarm skill; write the foundation files, the signature stubs for every unit, and the work manifest; verify every foundation path and stub exists on disk; then run Workflow({ name: 'claude-swarm:build', args: <the manifest> }) and finish after integration. Timestamp (date -Is) into phase.log when you start the foundation, when you invoke the Workflow, and when integration ends." \
-  --settings /path/to/claude-swarm/evals/arms/plugins-off.json \
+  --settings "$SWARM/evals/arms/plugins-off.json" \
+  --plugin-dir "$SWARM" \
   --model opus --effort high --max-turns 200 --output-format json \
   --allowedTools Read Write Edit Glob Grep Bash Task Workflow > ../build.json
 ```
+
+`--plugin-dir` is what makes this the *build* arm: without it the roster, the
+SessionStart policy and `claude-swarm:build` do not exist, and the command degrades to
+an expensive second solo run that fails at the Workflow call.
 
 Afterward collect: `build.json` (`total_cost_usd`, `modelUsage` per model),
 `.claude-swarm-feed.log` (per-agent completions with timestamps), `phase.log`,
 `git diff --stat` from the pre-run commit, and per-unit statuses from the workflow's
 returned `units` array (in the final result text).
+
+Then, same as the solo arm, **run `npx tsc --noEmit` and `npm run build` yourself** and
+record both exit codes. The template's table has a build column for those rows, and
+the run's own claim about them is not evidence — the arms have to be checked the same
+way or the comparison is not one.
+
+Two template fields need a source the run does not hand you:
+
+- **Repair cycles per unit** (typecheck-fix loops inside a leaf) are not in the feed
+  log — `hooks/subagent-stop.js` writes a timestamp, the agent name and the first 120
+  characters of the final message, and nothing about turns. They are countable only
+  from the subagent transcripts under
+  `~/.claude/projects/<slugified-cwd>/*.jsonl`, so copy that directory aside
+  **before** starting the next arm. If you did not, record `not collected` — never a
+  reconstructed guess, since this number scores a pre-registered prediction.
+- **Manifest violations verbatim** exist only if the master echoed the validator's
+  output into its final message; `--output-format json` returns that final text, not a
+  transcript of every tool call. If the manifest was rejected and the text does not
+  carry the violations, re-run the validator on the saved manifest and record its
+  output, noting that it was reproduced afterward rather than captured live.
 
 **4. Phase split method.** Foundation = start → Workflow invocation (phase.log).
 Leaf wave = Workflow invocation → last `claude-swarm:leaf` line in the feed.
@@ -214,12 +251,14 @@ Build arm only:
 - Measured serial fraction (foundation+integration)/total: ___ (expected 35–40%)
 - modelUsage: leaf-wave tokens booked to: ______ (Sonnet required; Opus ⇒ cost line VOID)
 - Units: total ___  done ___  partial ___  failed ___  unknown ___
-- Repair cycles per unit (from leaf transcripts/notes; count typecheck-fix loops):
+- Repair cycles per unit (from the copied subagent transcripts, §3; count typecheck-fix
+  loops — write `not collected` if the transcripts were not kept):
   unit / cycles: ...
   import-extension occurrences among them: ___
 - Integration rework: shared files written (expected): ___
   leaf-owned files integration MODIFIED (the metric): ___ of ___
-- Manifest: valid on first try? y/n — if no, violations verbatim + minutes to fix: ___
+- Manifest: valid on first try? y/n — if no, violations verbatim (§3: live from the
+  final text, or reproduced afterward — say which) + minutes to fix: ___
 
 Prediction scoring (README, "Recorded prediction: the first build run"):
 - wall 1.5–2.5x (spec-adjusted 1.6–2.3x): measured ___ → confirmed/falsified

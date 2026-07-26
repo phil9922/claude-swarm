@@ -60,6 +60,27 @@ still untouched.
   found by an adversarial pass, not by the suite, whose narrow-columns check stopped
   at 14. The badge now clips to the width it was handed; the check covers 8, 5 and 3.
 
+- **The shakedown protocol is executable as written** (`evals/shakedown.md`). Six
+  defects, all in the mechanics rather than the design — the frozen plan, the arms,
+  the spec and the pre-registered predictions are untouched:
+  - **The build arm was missing `--plugin-dir`.** Its command carried `--settings` but
+    never loaded the working tree, so the roster, the SessionStart policy and
+    `claude-swarm:build` would not have existed: the "build" arm would have run as an
+    expensive second solo arm and died at the Workflow call. Nothing in the recorded
+    numbers would have said so.
+  - `/path/to/claude-swarm` appeared literally in five commands, and the two scaffolds
+    had no parent directory — `cd ledgerline-solo` was the first command to fail
+    verbatim. Both are now `$SWARM` and `$RUN_ROOT`, exported once in Preconditions,
+    with `$RUN_ROOT` required to sit outside the repo so the arms' own source cannot
+    land in the plugin's git tree or its `git diff --stat`.
+  - The build arm was never told to re-run `npx tsc --noEmit` and `npm run build` by
+    hand, though the solo arm was and the results table has a column for both.
+  - Two template fields asked for numbers the run does not produce: repair cycles
+    (the feed log carries no turn data — the subagent transcripts must be copied aside
+    before the next arm, else the field is `not collected`) and manifest violations
+    (`--output-format json` returns the final text only, so they are captured live or
+    explicitly marked as reproduced afterward).
+
 ### Changed
 - **The panel's refresh cadence is fixed at 5 seconds and documented as such.** Read
   out of the Claude Code 2.1.220 binary: the subagent panel ticks on a hardcoded
