@@ -7,6 +7,48 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html): the git tag
 
 ## [Unreleased]
 
+## [0.2.7] — 2026-07-26
+
+### Fixed
+- **A stalled panel tick is no longer reported as a finished wave.** 0.2.6 reasoned that since
+  the panel ticks every ~5s while any row exists, a record that had gone stale while still
+  counting running agents *must* describe a wave that ended — and rendered it as `· ran 1:04`.
+  That inference is false. Any tick stall past 10 seconds (heavy load, a long blocking call,
+  sleep/resume) produces exactly that state **mid-wave**, and the segment then asserted an ending
+  that had not happened, with a duration frozen at the stall rather than at any real finish.
+  An adversarial pass reproduced it directly: backdate a live record's mtime by 20s and 0.2.6
+  prints `· ran 1:04` for a wave that is, by construction, still running. 0.2.5 printed nothing
+  for the same input — so 0.2.6 turned a harmless vanishing act into a confident wrong answer,
+  which is worse.
+
+  The segment now renders **three** states rather than two, and the new distinction is epistemic
+  rather than cosmetic:
+
+  | rendering | state | meaning |
+  |---|---|---|
+  | `· oldest 1:23` | live | the writer is ticking; agents are running now |
+  | `· ran 1:23` | ended | the writer observed its count reach zero and stamped `endedAt` |
+  | `· last 1:23` | unheard | the record went stale while still counting agents — nothing has updated it since 1:23 |
+
+  `unheard` is the honest reading of evidence that cannot distinguish "ended between two ticks"
+  from "the panel stalled". It claims only what is known. Both non-live states stay dimmed with
+  tier backgrounds dropped, so neither is mistaken for a running wave.
+
+- **The unheard window is a real 30 seconds.** In 0.2.6 that path only rendered while
+  `10s < age ≤ 30s` — an effective 20-second window, while the header comment claimed 30 and a
+  stamped wave genuinely got 30 from its stamp. The window now runs `GRACE_MS` from the staleness
+  cutoff, so both states get the same 30 seconds.
+
+### Tests
+- **Smoke checks 66 → 67**, and the previous check was rewritten. The 0.2.6 check could not catch
+  the 0.2.6 defect: it only ever built records for waves that had genuinely stopped for good, so
+  it passed both before and after the regression it was supposed to guard. The new check stalls a
+  **live** wave, asserts the segment never says `ran`, then lets the panel recover and asserts it
+  returns to live — and separately asserts a genuinely stamped end still reads as `ran`, so the
+  honest wording did not cost the confident wording where it is earned.
+- Both behaviours mutation-tested: collapsing `unheard` into `ended` fails exactly the two new
+  checks, and shrinking the window back to ~20s fails the 38-second assertion.
+
 ## [0.2.6] — 2026-07-26
 
 ### Fixed

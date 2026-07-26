@@ -8,22 +8,31 @@
  * operations" pattern, keyed by session_id). If the cache is missing or stale,
  * it prints nothing: no swarm running, no segment.
  *
- * A wave that has just finished is the exception. For 30s after a wave ends the
- * segment still renders — dimmed, backgrounds dropped, clock frozen at how long
- * the wave ran (`· ran 1:23` rather than `· oldest 1:23`). Without it the segment
- * vanished the instant the last agent exited: agents routinely finish in 15-45s,
- * one measured wave gave a 12-second window, and a wave ending while you read
- * code left no evidence it had run.
+ * A wave that has just finished is the exception. For 30s afterwards the segment
+ * still renders — dimmed, backgrounds dropped, clock frozen (`· ran 1:23` rather
+ * than `· oldest 1:23`). Without it the segment vanished the instant the last
+ * agent exited: agents routinely finish in 15-45s, one measured wave gave a
+ * 12-second window, and a wave ending while you read code left no evidence it
+ * had run.
  *
- * "When did the wave end" has two answers and this reader accepts either, because
- * the authoritative one is not always produced. The writer stamps `endedAt` when
- * it observes its running count fall to zero — but that requires a tick after the
- * last agent exits, and Claude Code stops invoking the panel once the rows clear.
- * If the last agent exits between two ticks, the transition is never seen and the
- * stamp never lands. So a record that has gone stale while still counting running
- * agents is read as a finished wave anchored at its last write: the panel ticks
- * every ~5s for as long as any row exists, so mtime cannot lag behind a live wave.
- * Both paths are covered by smoke checks; see the comments at the liveness test.
+ * The segment renders three states, and the distinction between the last two is
+ * epistemic rather than cosmetic:
+ *
+ *   `· oldest 1:23`  live    — the writer is ticking; agents are running now.
+ *   `· ran 1:23`     ended   — the writer observed its count reach zero and
+ *                              stamped `endedAt`. The wave is known to be over.
+ *   `· last 1:23`    unheard — the record went stale while still counting running
+ *                              agents. Usually the wave ended between two ticks
+ *                              and the stamp was missed; but a stalled panel
+ *                              looks identical, so this state claims only what is
+ *                              actually known: nothing has updated it since 1:23.
+ *
+ * The third state exists because the stamp cannot be relied on — it requires a
+ * tick after the last agent exits, and Claude Code stops invoking the panel once
+ * the rows clear. Do NOT be tempted to render `unheard` as `ended`: a previous
+ * release did exactly that, reasoning that a live wave cannot let mtime fall
+ * behind, and it turned a harmless vanishing act into a confident false claim
+ * whenever a tick stalled. All three states are covered by smoke checks.
  *
  * This is a POST-INSTALL script: a plugin's settings.json may only ship the
  * `agent` and `subagentStatusLine` keys ("Only the `agent` and
@@ -59,17 +68,16 @@ const TIER_CHIP = {
 }
 const RESET = '\x1b[0m'
 const DIM = '\x1b[2m'
-// The subagent panel stops ticking when the wave ends, so the cache's mtime is
-// the liveness signal: past this age the counts describe a finished wave. That
-// implication is load-bearing in both directions — it is also what lets a stale
-// record stand in for a missing `endedAt` stamp.
+// Past this age the record is no longer evidence of anything happening *now*.
+// It says the writer has not ticked recently — NOT that the wave has ended.
+// Those are different claims and conflating them is what broke 0.2.6.
 const STALE_MS = 10000
-// How long a finished wave stays on screen, dimmed. Agents routinely finish in
-// 15-45s, so a segment that disappeared the instant the last one exited was
-// invisible in ordinary use — measured at one 12-second window in practice.
-// Anchored to when the wave ended, never to "how stale the file is": a stamped
-// record must keep lingering after it goes stale (10s < 30s), and an unstamped
-// one is anchored at its final write. Staleness gates liveness, not this window.
+// How long a wave stays on screen after it stops being live, dimmed. Agents
+// routinely finish in 15-45s, so a segment that disappeared the instant the last
+// one exited was invisible in ordinary use — measured at one 12-second window.
+// Applied from whichever instant ended the live state: from `endedAt` for a
+// stamped wave, and from the staleness cutoff for an unheard one, so both get
+// the same 30 seconds rather than the unheard case silently getting ~20.
 const GRACE_MS = 30000
 
 function main(raw) {
@@ -85,43 +93,58 @@ function main(raw) {
   const stat = fs.statSync(file) // throws if absent → empty output
   const cached = JSON.parse(fs.readFileSync(file, 'utf8'))
 
-  // Two different liveness questions, and only one of them is about mtime. A
-  // live record is trusted while the writer is still ticking. A finished record
-  // carries its own clock and is trusted for a fixed window after the wave
-  // ended, whether or not anything is still refreshing the file.
+  // THREE states, not two. The distinction that matters is epistemic: there is a
+  // difference between knowing a wave ended and merely not having heard from it.
+  //
+  //   live    — the writer is still ticking. Agents are running now.
+  //   ended   — the writer observed its running count fall to zero and stamped
+  //             `endedAt`. The wave is known to be over.
+  //   unheard — the record has gone stale while still counting running agents.
+  //             Nothing has updated it recently. Most often that means the wave
+  //             ended between two ticks and the stamp was missed, but it can
+  //             equally mean the panel simply stalled and the wave is still
+  //             running. This state does not claim to know which.
+  //
+  // 0.2.6 collapsed `unheard` into `ended` and rendered it as `· ran`, on the
+  // reasoning that the panel ticks every ~5s while any row exists, so a stale
+  // record must describe a finished wave. That inference is false: any tick
+  // stall past 10s — heavy load, a long blocking call, sleep/resume — produces
+  // exactly this state mid-wave, and the segment then asserted a finish that had
+  // not happened, with a duration frozen at the stall rather than the end. That
+  // is worse than the vanishing it replaced: silence is merely unhelpful, a
+  // confident wrong answer is misleading. So `unheard` now says what is actually
+  // known — "no update since M:SS" — which is true under both readings.
   const endedAt = Number.isFinite(cached.endedAt) ? cached.endedAt : null
   const age = Date.now() - stat.mtimeMs
 
-  // When did this wave end? Prefer the writer's own stamp, but do not depend on
-  // it: the writer can only stamp `endedAt` on a tick where it observes the
-  // running count at zero, and that tick is not guaranteed to happen. Claude
-  // Code stops invoking the subagent panel once the rows clear, so if the last
-  // agent exits between two ticks the transition is never seen.
-  //
-  // Measured 2026-07-26: a 256s agent's final tick landed at 04:27:59 still
-  // counting one Sonnet; the agent exited ~04:28:00 and no further tick ever
-  // came. `endedAt` was never stamped and the record sat unwritten for 35
-  // minutes still claiming an agent was running — so the segment went quiet at
-  // the 10s staleness cutoff, which is precisely the vanishing act the grace
-  // window exists to prevent.
-  //
-  // A stale record that still counts running agents is therefore itself the
-  // end-of-wave signal: the panel ticks every ~5s for as long as any row
-  // exists, so mtime cannot fall behind while the wave is live. Anchor to the
-  // last write. It costs at most one tick of accuracy on the reported duration
-  // (the wave really ended somewhere in the following 5s) and, unlike the
-  // stamp, it cannot be missed.
-  let finishedAt = endedAt
-  if (finishedAt === null && age > STALE_MS) finishedAt = stat.mtimeMs
-  if (finishedAt !== null && Date.now() - finishedAt > GRACE_MS) return
+  let state
+  if (endedAt !== null) {
+    // A stamped wave lingers for GRACE_MS from the stamp, regardless of how
+    // stale the file has since become — the panel stops rewriting once its rows
+    // clear, so a finished record goes stale (10s) well before the window (30s).
+    if (Date.now() - endedAt > GRACE_MS) return
+    state = 'ended'
+  } else if (age <= STALE_MS) {
+    state = 'live'
+  } else if (age <= STALE_MS + GRACE_MS) {
+    // Measured while writing this: a wave whose stamp was missed sat unwritten
+    // for 35 minutes still counting one running agent. Without this branch the
+    // segment vanishes at STALE_MS and the wave leaves no trace at all.
+    // The window is GRACE_MS *after staleness begins*, so an unheard wave gets
+    // the same 30 seconds on screen as a stamped one rather than the ~20s that
+    // anchoring the cutoff at mtime alone would give it.
+    state = 'unheard'
+  } else {
+    return
+  }
 
   const counts = cached.counts || {}
   const chips = []
   for (const [tier, [letter, color]] of Object.entries(TIER_CHIP)) {
     const n = counts[tier]
-    // A finished wave drops the tier backgrounds and goes dim, so "just ran" is
-    // never mistaken at a glance for "running right now".
-    if (Number.isFinite(n) && n > 0) chips.push(`${finishedAt === null ? color : DIM} ${n}${letter} ${RESET}`)
+    // Anything not live drops the tier backgrounds and goes dim, so neither a
+    // finished wave nor a silent one is mistaken at a glance for a running one.
+    if (Number.isFinite(n) && n > 0) chips.push(`${state === 'live' ? color : DIM} ${n}${letter} ${RESET}`)
   }
   if (!chips.length) return
 
@@ -132,13 +155,20 @@ function main(raw) {
   let clock = ''
   const oldest = cached.oldestStart
   if (Number.isFinite(oldest)) {
-    // Live: the clock runs, so it is computed against now. Finished: it stops at
-    // the moment the wave ended and reports how long the wave lasted — a clock
-    // still climbing after the last agent exited would be a lie.
-    const end = finishedAt === null ? Date.now() : finishedAt
-    const s = Math.max(0, Math.floor((end - oldest) / 1000))
+    // Each state measures to a different instant, and each label says which:
+    //   live    → now.        `oldest 1:23` — the running clock of the oldest agent.
+    //   ended   → endedAt.    `ran 1:23`    — how long the wave lasted. A clock
+    //                          still climbing after the last agent exited is a lie.
+    //   unheard → mtime.      `last 1:23`   — where the clock stood at the final
+    //                          update. Not a claim about when the wave ended,
+    //                          because that is exactly what is not known. If the
+    //                          panel merely stalled, this is still true: it is
+    //                          the last thing anybody actually observed.
+    const anchor = state === 'live' ? Date.now() : state === 'ended' ? endedAt : stat.mtimeMs
+    const label = state === 'live' ? 'oldest' : state === 'ended' ? 'ran' : 'last'
+    const s = Math.max(0, Math.floor((anchor - oldest) / 1000))
     const mmss = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
-    clock = ` ${DIM}· ${finishedAt === null ? 'oldest' : 'ran'} ${mmss}${RESET}`
+    clock = ` ${DIM}· ${label} ${mmss}${RESET}`
   }
   process.stdout.write(`${DIM}claude-swarm${RESET} ${chips.join(' ')}${clock}`)
 }

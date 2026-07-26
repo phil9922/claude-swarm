@@ -1156,49 +1156,76 @@ check('main statusline segment lingers dimmed after a wave, then goes quiet', ()
   assert(/· oldest /.test(revived), `a new wave renders live again, got "${revived}"`)
 })
 
-// Regression: the grace window must not depend on the writer ever seeing the
-// transition to zero. Observed live 2026-07-26 — a 256s agent's final panel tick
-// landed 1s before it exited, no further tick came, `endedAt` was never stamped,
-// and the segment vanished at the staleness cutoff. That is the exact failure the
-// grace window exists to prevent, so the reader now treats a stale record that
-// still counts running agents as a wave that ended at its last write.
-check('main statusline segment lingers even when endedAt was never stamped', () => {
+// A wave whose end-stamp was missed must still leave evidence. Observed live
+// 2026-07-26: a 256s agent's final panel tick landed 1s before it exited, no
+// further tick came, `endedAt` was never stamped, and the segment vanished at the
+// staleness cutoff — the exact failure the grace window exists to prevent.
+check('main statusline segment still shows a wave whose end-stamp was missed', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-sl-'))
   const stdin = JSON.stringify({ session_id: 'smoke-sess' })
   const cache = path.join(tmp, 'claude-swarm-status-smoke-sess.json')
 
-  // A live wave, and then the panel simply stops being invoked — no zero-count
-  // tick, so the record keeps its running counts and carries no end stamp.
   runStatusline(SUB_SL, JSON.stringify(SL_TASKS), tmp)
   const rec = JSON.parse(fs.readFileSync(cache, 'utf8'))
   assert(!('endedAt' in rec), 'precondition: a live record carries no end stamp')
   assert((rec.counts.sonnet || 0) > 0, 'precondition: the record still counts running agents')
 
-  // Inside the window: stale enough to be finished, recent enough to linger.
   const justStale = new Date(Date.now() - 15000)
   fs.utimesSync(cache, justStale, justStale)
   const res = runStatusline(MAIN_SL, stdin, tmp)
   const seg = stripAnsi(res.stdout)
   assert(res.status === 0, 'must exit 0')
-  assert(seg !== '', 'an unstamped finished wave must not vanish at the staleness cutoff')
-  assert(/· ran /.test(seg), `it reads as finished, not running, got "${seg}"`)
-  assert(!/· oldest/.test(seg), 'and must not claim anything is still running')
-  assert(!/\x1b\[10[236];30m/.test(res.stdout), 'tier backgrounds dropped, same as a stamped wave')
+  assert(seg !== '', 'an unheard wave must not vanish at the staleness cutoff')
+  assert(!/· oldest/.test(seg), `must not claim anything is running, got "${seg}"`)
+  assert(!/\x1b\[10[236];30m/.test(res.stdout), 'tier backgrounds dropped — not live')
 
-  // The inferred duration is anchored at the last write, so it stops at roughly
-  // when the wave really ended rather than continuing to climb.
-  assert(/· ran 1:4\d|· ran 1:5\d/.test(seg), `clock frozen near the last write, got "${seg}"`)
+  // It reports the last thing observed, and does NOT assert an ending it cannot
+  // know about. `ran` is a claim the evidence does not support; `last` is not.
+  assert(/· last /.test(seg), `an unheard wave reports "last", got "${seg}"`)
+  assert(!/· ran /.test(seg), `it must not claim the wave ended, got "${seg}"`)
+  assert(/· last 1:4\d|· last 1:5\d/.test(seg), `clock frozen at the last write, got "${seg}"`)
 
-  // Past the window, an unstamped record goes quiet like a stamped one.
+  // The unheard window runs GRACE_MS from the staleness cutoff, so it gets the
+  // same 30s a stamped wave gets — not ~20s.
+  const nearEdge = new Date(Date.now() - 38000)
+  fs.utimesSync(cache, nearEdge, nearEdge)
+  assert(/· last /.test(stripAnsi(runStatusline(MAIN_SL, stdin, tmp).stdout)), 'still shown at 38s')
+
   const longGone = new Date(Date.now() - 45000)
   fs.utimesSync(cache, longGone, longGone)
   const expired = runStatusline(MAIN_SL, stdin, tmp)
-  assert(expired.status === 0 && expired.stdout === '', 'past the window an unstamped wave goes quiet too')
+  assert(expired.status === 0 && expired.stdout === '', 'past the window an unheard wave goes quiet')
+})
 
-  // And a genuinely live record is still read as live, not as just-finished.
+// The regression that 0.2.6 shipped and its own test could not catch: a stale
+// record proves the writer has not ticked, NOT that the wave ended. 0.2.6 read
+// the two as equivalent and rendered `· ran` — a confident false claim — whenever
+// a tick stalled mid-wave. The previous check passed throughout, because it only
+// ever built records for waves that had genuinely stopped for good.
+check('a stalled tick mid-wave is never reported as a finished wave', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-sl-'))
+  const stdin = JSON.stringify({ session_id: 'smoke-sess' })
+  const cache = path.join(tmp, 'claude-swarm-status-smoke-sess.json')
+
+  // A wave that is running, whose panel then stalls for 20s.
   runStatusline(SUB_SL, JSON.stringify(SL_TASKS), tmp)
-  const live = stripAnsi(runStatusline(MAIN_SL, stdin, tmp).stdout)
-  assert(/· oldest /.test(live), `a fresh record is still live, got "${live}"`)
+  const stalled = new Date(Date.now() - 20000)
+  fs.utimesSync(cache, stalled, stalled)
+  const seg = stripAnsi(runStatusline(MAIN_SL, stdin, tmp).stdout)
+  assert(!/· ran /.test(seg), `a stall must not be reported as an ending, got "${seg}"`)
+
+  // The wave is in fact still alive: the panel recovers and writes again. The
+  // segment must return to live rather than staying stuck in a finished state.
+  runStatusline(SUB_SL, JSON.stringify(SL_TASKS), tmp)
+  const revived = stripAnsi(runStatusline(MAIN_SL, stdin, tmp).stdout)
+  assert(/· oldest /.test(revived), `a recovered tick reads as live again, got "${revived}"`)
+
+  // And a genuinely stamped end is still reported as one — the honest wording of
+  // the unheard state must not have cost us the confident wording where it is
+  // earned.
+  runStatusline(SUB_SL, JSON.stringify({ session_id: 'smoke-sess', columns: 100, tasks: [] }), tmp)
+  const ended = stripAnsi(runStatusline(MAIN_SL, stdin, tmp).stdout)
+  assert(/· ran /.test(ended), `a stamped end still reads as "ran", got "${ended}"`)
 })
 
 // --- Report ----------------------------------------------------------------
