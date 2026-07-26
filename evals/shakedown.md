@@ -103,6 +103,13 @@ src/tokens.css.
   advantage in exactly the thing being measured, invisible in the results. The
   plugin's own policy still reaches the build arm via the SessionStart hook and
   the skill, so this costs it nothing it is meant to have.
+- **Disable the installed plugin on BOTH arms** with
+  `--settings /path/to/claude-swarm/evals/arms/plugins-off.json` (every command below
+  carries it). The machine has claude-swarm installed from the marketplace at an older
+  version; without this, the build arm loads **two copies** — two rosters, two
+  SessionStart hooks injecting two different policies — and the solo arm silently gets
+  the installed policy and roster, which makes it not a solo baseline. This is the
+  same "never two copies at once" guarantee the eval harness has.
 - Load the plugin from the working tree with `--plugin-dir /path/to/claude-swarm`
   (the eval harness's guarantee: you measure the tree, not an installed copy).
 
@@ -114,6 +121,7 @@ cd ledgerline-solo
 time CLAUDE_CODE_DISABLE_CLAUDE_MDS=1 claude -p "$(cat PLAN.md)
 
 Implement the entire plan now, solo. Run npx tsc --noEmit and fix all errors, then npm run build, before finishing." \
+  --settings /path/to/claude-swarm/evals/arms/plugins-off.json \
   --model opus --effort high --max-turns 200 --output-format json \
   --allowedTools Read Write Edit Glob Grep Bash > ../solo.json
 ```
@@ -128,6 +136,7 @@ cost prediction rather than falsifying it — cheaper to catch now than after:
 ```bash
 cd ledgerline-build
 CLAUDE_CODE_DISABLE_CLAUDE_MDS=1 claude -p 'Spawn the claude-swarm:leaf subagent with the task: "reply done". Report what it said.' \
+  --settings /path/to/claude-swarm/evals/arms/plugins-off.json \
   --plugin-dir /path/to/claude-swarm --model opus --max-turns 6 \
   --allowedTools Task --output-format json | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const o=JSON.parse(s);console.log(Object.keys(o.modelUsage||{}))})"
 ```
@@ -144,6 +153,7 @@ cd ledgerline-build
 time CLAUDE_CODE_DISABLE_CLAUDE_MDS=1 claude -p "$(cat PLAN.md)
 
 Build this with the claude-swarm build flow: load the claude-swarm skill; write the foundation files, the signature stubs for every unit, and the work manifest; verify every foundation path and stub exists on disk; then run Workflow({ name: 'claude-swarm:build', args: <the manifest> }) and finish after integration. Timestamp (date -Is) into phase.log when you start the foundation, when you invoke the Workflow, and when integration ends." \
+  --settings /path/to/claude-swarm/evals/arms/plugins-off.json \
   --model opus --effort high --max-turns 200 --output-format json \
   --allowedTools Read Write Edit Glob Grep Bash Task Workflow > ../build.json
 ```
@@ -171,7 +181,9 @@ prompts change but the conditions must not. Carry over per arm:
 `CLAUDE_CODE_DISABLE_CLAUDE_MDS=1` in the environment of **both arms** — solo-only
 would change two variables at once, handing the build arm a personal delegation
 policy on top of the plugin's while the plugin's own policy still arrives via its
-SessionStart hook (see Preconditions); deny `Task` and
+SessionStart hook (see Preconditions); the plugins-off settings file on **both arms**
+(the installed marketplace copy is an older version — without this the build arm
+loads two copies and the solo arm gets a roster and policy injected); deny `Task` and
 `Workflow` to the solo arm (stock Claude Code still has Explore/general-purpose
 subagents); `--plugin-dir` on the build arm; wall time by hand from prompt-send to
 stop; `/cost` captured at the end of each session before doing anything else, and
