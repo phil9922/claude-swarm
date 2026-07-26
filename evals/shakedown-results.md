@@ -117,6 +117,43 @@ shows the prediction was scored against a spec whose serial fraction was roughly
 protocol assumed (69.7% vs 35–40%).** Both statements belong in any writeup. The 1.3x falsifier
 should not be read as "fan-out does not work" on this evidence.
 
+## Where the serial time actually went
+
+Reconstructed afterwards from the master's transcript. Phase boundaries are exact
+(`phase.log`); the within-phase splits are inferred from message timestamps and should
+be read as approximate — one reconstruction of the foundation phase summed to 674s
+against an actual 602s, so treat the proportions as indicative, not measured.
+
+**Foundation, 602s.** 26 file writes and only 8 Bash calls — this phase was writing,
+not tool-thrashing. Roughly: skill loading and scaffold survey (including proving the
+root `tsc` was a no-op), then designing and writing 12 shared files, then 14 signature
+stubs. The shared files were not just contracts: `money.ts`, `balances.ts`, `filter.ts`,
+`stats.ts` and `validate.ts` were **fully implemented**, each with a clear contract and
+its own file. All five could have been units. So the serial phase wrote the hard,
+algorithmic parts and the parallel wave got the presentational components — the inverse
+of the shape that makes fan-out pay.
+
+**Leaf wave, 402s.** The first five leaves completed within a **6-second span**
+(09:32:33–09:32:39), then completions became staggered with gaps up to 104s. Completion
+timestamps cannot distinguish staggered starts from variable durations, so this is
+suggestive rather than conclusive — but a tight leading cluster followed by stragglers
+is the signature of a slot queue, and the run had 14 units against a `concurrency`
+default of 8.
+
+**Integration, 321s — and most of it was not integration.** The workflow's mechanic
+finished at 09:37:05. Nearly everything after that was the **master's own
+post-workflow verification**: adversarial CSV quoting (~51s), a headless browser render
+(~18s), and driving the real UI through split-kind conversions (~142s, which found and
+fixed two genuine bugs), plus `oxlint`. That is roughly **215s of work the solo arm
+never did at all**.
+
+**A like-for-like adjustment, offered as an adjustment and not as a measurement.**
+Subtracting that ~215s leaves ~1195s against solo's 997s — a ratio of **~0.83x instead
+of 0.71x**. The build arm is still slower, so the falsification stands either way; but
+roughly a third of the measured gap is the build arm doing more work rather than doing
+the same work more slowly. The headline numbers in the table above are left untouched:
+they are what the arms actually cost.
+
 ## Confounds — recorded, not hidden
 
 1. **The arms did not do equal work.** The build arm's master went well beyond the frozen plan:
