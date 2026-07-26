@@ -95,8 +95,14 @@ src/tokens.css.
 - `echo ${CLAUDE_CODE_SUBAGENT_MODEL:-unset}` must print `unset` (or `inherit`) — any
   other value voids the tier pins, and the plugin's SessionStart hook warns about
   exactly this.
-- `CLAUDE_CODE_DISABLE_CLAUDE_MDS=1` on every command, so a global CLAUDE.md can't
-  leak delegation guidance into the solo arm (same reason the eval harness sets it).
+- `CLAUDE_CODE_DISABLE_CLAUDE_MDS=1` on **both arms** (and the probe), same as the
+  eval harness sets it for all three of its arms. Solo-only would make the arms
+  differ in two ways instead of one: the solo arm is not a solo baseline if a
+  global CLAUDE.md hands it a delegation policy, and the build arm would silently
+  get a personal delegation policy and roster on top of the plugin's — an
+  advantage in exactly the thing being measured, invisible in the results. The
+  plugin's own policy still reaches the build arm via the SessionStart hook and
+  the skill, so this costs it nothing it is meant to have.
 - Load the plugin from the working tree with `--plugin-dir /path/to/claude-swarm`
   (the eval harness's guarantee: you measure the tree, not an installed copy).
 
@@ -162,8 +168,10 @@ template. Don't edit the prediction.
 
 **If running the arms interactively instead of via the `-p` commands above**, the
 prompts change but the conditions must not. Carry over per arm:
-`CLAUDE_CODE_DISABLE_CLAUDE_MDS=1` in the environment (the solo arm is not a solo
-baseline if a global CLAUDE.md hands it a delegation policy); deny `Task` and
+`CLAUDE_CODE_DISABLE_CLAUDE_MDS=1` in the environment of **both arms** — solo-only
+would change two variables at once, handing the build arm a personal delegation
+policy on top of the plugin's while the plugin's own policy still arrives via its
+SessionStart hook (see Preconditions); deny `Task` and
 `Workflow` to the solo arm (stock Claude Code still has Explore/general-purpose
 subagents); `--plugin-dir` on the build arm; wall time by hand from prompt-send to
 stop; `/cost` captured at the end of each session before doing anything else, and
