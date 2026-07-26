@@ -1,6 +1,6 @@
 {
   "name": "claude-swarm",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "description": "Smoke tests for the claude-swarm Claude Code plugin. The plugin itself needs no build step; this exists only to validate the manifests, hook, and workflows load.",
   "scripts": {

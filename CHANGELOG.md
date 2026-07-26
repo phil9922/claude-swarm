@@ -7,6 +7,65 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html): the git tag
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-07-26
+
+Everything between the 0.2.0 reframe and the first real build run: deferred decisions
+settled on measurement, the shakedown protocol, and the fixes that keep its metrics clean.
+Matters for marketplace installs in particular — the shakedown loads the working tree via
+`--plugin-dir`, but organic installs read the cached version and see none of this without
+the bump.
+
+### Changed
+- **`leaf` drops to `effort: low`, measured rather than defaulted.** Writing: low vs
+  medium across four units with real type surface, self-repair disabled, tied 3/4 on
+  first-attempt type check — the same unit failing with the same missing-import error at
+  both levels — with equal turns, low ~9% cheaper and ~27% faster. Repair, the thing that
+  actually makes the tier drop safe: the shipped typecheck-and-fix path cleared the known
+  failing artifact at low in 6 turns for $0.15. The evidence and the turn arithmetic
+  (write 5–6 of 25, ~6 per repair cycle) are recorded above the pin.
+- **Extending the import line is explicitly the leaf's job**, stated next to "never change
+  a signature" in the agent definition and in the dispatch prompt. Implementations
+  routinely need types the signature never names — the observed failure used a type
+  internal to the contract's structure, so no correctly specified stub could have
+  pre-imported it. A smoke check pins the rule's presence in both homes.
+- **Batching merges nested read-sets** (prefix sharing, not set equality), reads the
+  shared portion first, and orders each batch owner-before-reader, since subset merging
+  can co-locate a dependency with its dependent.
+- **Each leaf's type check is sibling-filtered and hardened.** The project command runs
+  unfiltered with output and exit captured, then the output is filtered to the leaf's
+  owned files: `OWNED-FILES-CLEAN` is the positive marker, `TYPECHECK-BROKEN` reports a
+  tool that failed to run (exit > 1 or a fileless `error TS` diagnostic), and the script's
+  own exit status is always 0 — the verdict is output-only. The naive pipe it replaces had
+  an inverted exit code (grep exits 1 exactly when clean) and read a broken grader as a
+  clean pass. A smoke check executes the generated script against all three cases.
+- **Wave 1 stubs must compile**: "empty bodies" became compiling placeholder bodies
+  (`throw new Error('not implemented')`) in the skill, the README, and the leaf prompt,
+  so the only errors a leaf sees are ones it caused.
+- **The injected-policy byte budget is decided, not inherited**: 3000B quiet / 3300B
+  day-one — current content plus one structural change of headroom — after the old 2600B
+  ceiling was re-tightened twice in one redesign. The test comment carries the reasoning:
+  growth past the budget means reference material is accreting in the policy and should
+  move to the skill.
+
+### Added
+- **`validateManifest` warns on unknown manifest keys**, top-level and per-unit, naming
+  the key and the nearest valid one. A misspelled `foundations:` was silently inert and
+  cascaded into misleading per-read violations; it now gets one accurate warning first.
+  A round-tripped `status` field on units is accepted silently.
+- **Pre-registered predictions in `evals/README.md`**: audit's quality arm (better, not
+  cheaper — or no measured claim at all), and the first build run — wall 1.5–2.5x, cost
+  within ~±25% (void, not falsified, if leaves book to Opus), integration rework under a
+  third of leaf files, repair cycles ~1 per unit, `unknown` at most ~1 in 6 — with three
+  repair cycles named as the silent-cap threshold.
+- **`evals/shakedown.md`**: the frozen Ledgerline spec (ten leaf units with real type
+  surface, expected serial fraction stated at ~35–40%), the identical-plan rule, the
+  solo-first procedure with a Sonnet-booking probe before the build arm, a recording
+  template matching the predictions field for field, and the first-contact risk list.
+- **A skill note that effort pins degrade silently** — Claude Code falls back to the
+  highest supported level at or below the pin, so a pin invalidated by a future model
+  change never announces itself.
+- Smoke coverage grew from 46 to 51 checks.
+
 ## [0.2.0] — 2026-07-25
 
 Reframes the plugin around what the benchmark actually supports. The old pitch sold the
