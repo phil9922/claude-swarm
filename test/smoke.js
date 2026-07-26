@@ -908,6 +908,46 @@ check('subagent statusline honors the drop order under narrow columns', () => {
   }
 })
 
+check('subagent statusline survives a bare-name identity, but reserves red for scoped', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-sl-'))
+  // The tasks array's identity field shape is unspecified; a bare roster name
+  // must still badge rather than no-op the whole feature.
+  const bare = {
+    session_id: 'bare', columns: 100,
+    tasks: [
+      { id: 'x', name: 'mechanic', label: 'rename', status: 'running', startTime: Date.now(), model: 'claude-sonnet-5' },
+      { id: 'y', name: 'leaf', label: 'not ours', status: 'running', startTime: Date.now(), model: 'claude-opus-5' },
+    ],
+  }
+  const res = runStatusline(SUB_SL, JSON.stringify(bare), tmp)
+  const rows = {}
+  for (const line of res.stdout.trim().split('\n')) {
+    const o = JSON.parse(line)
+    rows[o.id] = o.content
+  }
+  assert(/MECH/.test(rows['x'] || ''), 'a bare roster name still renders a badge')
+  assert(!/\x1b\[101;97m/.test(rows['y'] || ''), 'an unscoped "leaf" must not fire the anomaly alarm')
+  assert(/\x1b\[103;30m/.test(rows['y'] || ''), 'it gets the ordinary Opus badge instead')
+})
+
+check('subagent statusline drops the clock on a finished task', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-sl-'))
+  // No end time exists in the payload, so elapsed on a terminal row would be a
+  // clock still counting after the agent stopped.
+  const done = {
+    session_id: 'done', columns: 100,
+    tasks: [{ id: 'd', type: 'claude-swarm:leaf', label: 'Finished', status: 'completed',
+      startTime: Date.now() - 90000, model: 'claude-sonnet-5', contextWindowSize: 200000, tokenCount: 50000 }],
+  }
+  const res = runStatusline(SUB_SL, JSON.stringify(done), tmp)
+  const row = JSON.parse(res.stdout.trim()).content
+  assert(/LEAF/.test(row), 'a finished row keeps its tier badge')
+  assert(!/\d:\d\d/.test(stripAnsi(row)), 'no elapsed clock on a terminal row')
+  assert(!/█|░/.test(row), 'no stale context bar on a terminal row')
+  const agg = JSON.parse(fs.readFileSync(path.join(tmp, 'claude-swarm-status-done.json'), 'utf8'))
+  assert(Object.values(agg.counts).every((n) => n === 0), 'a finished task counts toward no tier')
+})
+
 check('subagent statusline swallows garbage input and exits 0', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-sl-'))
   const res = runStatusline(SUB_SL, 'not json at all', tmp)

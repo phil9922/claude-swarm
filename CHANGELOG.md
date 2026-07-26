@@ -39,10 +39,32 @@ pre-registered predictions and the frozen shakedown protocol are untouched.
   `subagentStatusLine` — so the subagent renderer caches a ~100-byte per-session
   aggregate in the OS temp dir (the statusline docs' own caching pattern, keyed by
   sanitized `session_id`) and the segment reads it with a 10s staleness cutoff.
-- **Smoke checks (51 → 58)** run both scripts against synthetic payloads: the tier
+- **Smoke checks (51 → 60)** run both scripts against synthetic payloads: the tier
   matrix incl. the red anomaly badge, model-absent degradation, narrow-columns drop
   order with ANSI-stripped width asserted, garbage stdin, aggregate cache contents,
-  and the segment's live/stale/missing cache behavior.
+  the segment's live/stale/missing cache behavior, bare-name identity, and the
+  terminal-status row.
+
+### Fixed before first use
+Two silent failures found by re-reading the payload contract against the shipped
+renderer, both fixed under this same unreleased version:
+- **A finished row's clock kept counting.** The tasks payload carries `startTime`
+  but no end time, so elapsed can only be computed against now — on a terminal
+  status that is a clock still ticking after the agent stopped. Terminal rows now
+  drop elapsed and the context bar (both stale) and dim the label, keeping only the
+  tier badge.
+- **Identity matching was single-shaped.** The field carrying a subagent's identity
+  in the tasks array is unspecified; only `SubagentStop`'s scoped `agent_type`
+  ("claude-swarm:leaf") is documented elsewhere. A mismatch would have silently
+  no-op'd the entire feature. Matching now also accepts a bare roster name across
+  `type`/`name`/`agent_type`/`subagent_type` — but **only a scoped match may raise
+  the red anomaly**, so a user's own agent named `leaf` cannot fire the one alarm
+  that is supposed to mean something.
+
+Tier detection is substring-based rather than an ID whitelist, so provider-prefixed
+IDs (`us.anthropic.claude-sonnet-4-…-v1:0`) resolve correctly, and a leaf resolved
+to Fable — which contains no tier word — trips the anomaly rather than falling
+through to neutral. Both verified by hand against the renderer.
 
 ### Known first-contact risk
 - Whether `${CLAUDE_PLUGIN_ROOT}` substitutes inside a plugin `settings.json`

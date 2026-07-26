@@ -69,12 +69,20 @@ function tierOf(model) {
   return 'other' // resolved, but none of the three routed tiers (e.g. fable)
 }
 
+// Which field carries the agent identity, and in what form, is not specified for
+// the tasks array — SubagentStop's agent_type is the scoped "claude-swarm:leaf",
+// so that is the expected shape, but a bare roster name is accepted as a fallback
+// rather than letting the whole feature no-op on a naming mismatch. `scoped`
+// records which form matched: only a scoped match may raise the red anomaly, so a
+// user's own agent that happens to be called "leaf" can't fire our one alarm.
 function agentKey(task) {
-  // Plugin subagents carry the scoped identifier ("claude-swarm:leaf") in
-  // type and/or name; accept either.
-  for (const field of [task.type, task.name]) {
-    if (typeof field === 'string' && field.startsWith('claude-swarm:')) {
-      return field.slice('claude-swarm:'.length)
+  for (const field of [task.type, task.name, task.agent_type, task.subagent_type]) {
+    if (typeof field !== 'string' || !field) continue
+    if (field.startsWith('claude-swarm:')) {
+      return { key: field.slice('claude-swarm:'.length), scoped: true }
+    }
+    if (Object.prototype.hasOwnProperty.call(BADGE, field)) {
+      return { key: field, scoped: false }
     }
   }
   return null
@@ -106,12 +114,12 @@ function isRunning(status) {
   return !(typeof status === 'string' && /complet|done|fail|error|stop|cancel/i.test(status))
 }
 
-function badgeFor(key, task) {
+function badgeFor(key, task, scoped) {
   const tier = tierOf(task.model)
   const text = (BADGE[key] || key.toUpperCase().slice(0, BADGE_W)).padEnd(BADGE_W)
   if (tier === null) return { text, color: NEUTRAL_BG, tier, anomaly: false }
   // The one reserved use of red: a leaf off Sonnet.
-  if (key === 'leaf' && tier !== 'sonnet') return { text, color: ANOMALY_BG, tier, anomaly: true }
+  if (scoped && key === 'leaf' && tier !== 'sonnet') return { text, color: ANOMALY_BG, tier, anomaly: true }
   if (tier === 'other') return { text, color: NEUTRAL_BG, tier, anomaly: false }
   return { text, color: TIER_BG[tier], tier, anomaly: false }
 }
@@ -122,15 +130,20 @@ function cleanLabel(task) {
     .trim()
 }
 
-function renderRow(task, key, columns, sharedLabelW) {
-  const badge = badgeFor(key, task)
+function renderRow(task, key, columns, sharedLabelW, scoped) {
+  const badge = badgeFor(key, task, scoped)
   const badgePlain = ` ${badge.text} ` // 1 + BADGE_W + 1 visible columns
+  const live = isRunning(task.status)
 
-  const secs = elapsedSeconds(task.startTime)
+  // The payload carries startTime but no end time, so elapsed can only be
+  // computed against now — which for a finished row would be a clock that keeps
+  // counting after the agent stopped. Drop elapsed and the context bar once a
+  // task reaches a terminal status rather than display a number that lies.
+  const secs = live ? elapsedSeconds(task.startTime) : null
   const elapsedPlain = secs === null ? null : formatElapsed(secs)
   const elapsedWeight = secs === null ? '' : secs >= ELAPSED_BOLD_S ? BOLD : secs < ELAPSED_NORMAL_S ? DIM : ''
 
-  const barPlain = contextBar(task)
+  const barPlain = live ? contextBar(task) : null
   const rawLabel = cleanLabel(task)
 
   // Drop order under a tight `columns`: context bar first, then the label,
@@ -161,7 +174,7 @@ function renderRow(task, key, columns, sharedLabelW) {
   }
 
   const parts = [`${badge.color}${badgePlain}${RESET}`]
-  if (labelCol) parts.push(labelCol)
+  if (labelCol) parts.push(live ? labelCol : `${DIM}${labelCol}${RESET}`)
   if (elapsed) parts.push(elapsedWeight ? `${elapsedWeight}${elapsed}${RESET}` : elapsed)
   if (bar) parts.push(bar)
   return parts.join('  ')
@@ -189,8 +202,8 @@ function main(raw) {
   const ours = []
   for (const task of tasks) {
     if (!task || typeof task !== 'object' || task.id === undefined) continue
-    const key = agentKey(task)
-    if (key !== null) ours.push([task, key])
+    const match = agentKey(task)
+    if (match !== null) ours.push([task, match.key, match.scoped])
   }
   // One label column across all rows of this tick, so elapsed aligns.
   const sharedLabelW = Math.min(
@@ -198,9 +211,9 @@ function main(raw) {
     MAX_LABEL,
   )
 
-  for (const [task, key] of ours) {
+  for (const [task, key, scoped] of ours) {
     if (isRunning(task.status)) {
-      const badge = badgeFor(key, task)
+      const badge = badgeFor(key, task, scoped)
       if (badge.anomaly) counts.anomaly++
       else if (badge.tier === null || badge.tier === 'other') counts.unresolved++
       else counts[badge.tier]++
@@ -208,7 +221,7 @@ function main(raw) {
 
     let content
     try {
-      content = renderRow(task, key, columns, sharedLabelW)
+      content = renderRow(task, key, columns, sharedLabelW, scoped)
     } catch (_) {
       continue // one bad task falls back to default rendering, not a blank panel
     }
