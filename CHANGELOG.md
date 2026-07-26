@@ -7,6 +7,36 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html): the git tag
 
 ## [Unreleased]
 
+### Fixed
+- **The 30-second grace window now actually fires.** 0.2.5 shipped it, and it worked in the
+  session that built it, but it depended on something Claude Code does not reliably do. The
+  writer can only stamp `endedAt` on a tick where it *observes* the running count at zero —
+  and the panel stops being invoked once its rows clear. If the last agent exits between two
+  ticks, that observation never happens.
+
+  Measured 2026-07-26: a 256-second agent's final tick landed at 04:27:59 still counting one
+  Sonnet; the agent exited about a second later and no further tick ever came. `endedAt` was
+  never stamped, and the record sat unwritten for 35 minutes still claiming an agent was
+  running. The segment went quiet at the 10-second staleness cutoff — the exact vanishing act
+  the grace window was built to prevent, in the exact case that motivated it.
+
+  The fix is in the reader, because the writer cannot report a transition it is never invoked
+  to see. A record that has gone stale *while still counting running agents* is now itself the
+  end-of-wave signal: the panel ticks every ~5s for as long as any row exists, so mtime cannot
+  fall behind a live wave. Such a record is read as a wave that ended at its last write. The
+  stamp is still preferred when present; this is a fallback, not a replacement. Cost is at most
+  one tick of accuracy on the reported duration, since the wave really ended somewhere in the
+  5 seconds after that final write — and unlike the stamp, it cannot be missed.
+
+  Staleness now gates *liveness only*, never the grace window itself. Both anchors are covered
+  by smoke checks, and the new one was mutation-tested: restoring the pre-fix branch fails
+  exactly that check and nothing else.
+
+### Tests
+- **Smoke checks 65 → 66.** An unstamped finished wave lingers dimmed, reads as `· ran` rather
+  than `· oldest`, drops its tier backgrounds, freezes its clock near the last write, goes quiet
+  past the window, and does not swallow a genuinely live record.
+
 ## [0.2.5] — 2026-07-26
 
 ### Added
@@ -78,6 +108,16 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html): the git tag
   fall back to defaults; and with two sessions on different copies of the plugin, the
   last to start owns the breadcrumb. The hook's "writes nothing" contract is amended
   rather than quietly broken — it still touches nothing in a user's config dir.
+
+  Reported upstream on 2026-07-26 as
+  [anthropics/claude-code#81320](https://github.com/anthropics/claude-code/issues/81320).
+  One correction to the wording above, made while writing that report: the docs do not
+  actually *promise* substitution in plugin settings. The plugins reference carries a
+  placeholder-resolution table naming five components — skill/agent content, hook and
+  monitor commands, MCP stdio, MCP http/sse/ws, LSP — and settings is not among them.
+  So this is an unnoted gap plus a docs omission rather than a contradiction, and
+  "unusable as documented" above should be read as "unusable for the only purpose the
+  key has", not as the docs contradicting themselves.
 
 ## [0.2.3] — 2026-07-26
 

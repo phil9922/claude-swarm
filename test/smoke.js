@@ -1156,6 +1156,51 @@ check('main statusline segment lingers dimmed after a wave, then goes quiet', ()
   assert(/· oldest /.test(revived), `a new wave renders live again, got "${revived}"`)
 })
 
+// Regression: the grace window must not depend on the writer ever seeing the
+// transition to zero. Observed live 2026-07-26 — a 256s agent's final panel tick
+// landed 1s before it exited, no further tick came, `endedAt` was never stamped,
+// and the segment vanished at the staleness cutoff. That is the exact failure the
+// grace window exists to prevent, so the reader now treats a stale record that
+// still counts running agents as a wave that ended at its last write.
+check('main statusline segment lingers even when endedAt was never stamped', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-sl-'))
+  const stdin = JSON.stringify({ session_id: 'smoke-sess' })
+  const cache = path.join(tmp, 'claude-swarm-status-smoke-sess.json')
+
+  // A live wave, and then the panel simply stops being invoked — no zero-count
+  // tick, so the record keeps its running counts and carries no end stamp.
+  runStatusline(SUB_SL, JSON.stringify(SL_TASKS), tmp)
+  const rec = JSON.parse(fs.readFileSync(cache, 'utf8'))
+  assert(!('endedAt' in rec), 'precondition: a live record carries no end stamp')
+  assert((rec.counts.sonnet || 0) > 0, 'precondition: the record still counts running agents')
+
+  // Inside the window: stale enough to be finished, recent enough to linger.
+  const justStale = new Date(Date.now() - 15000)
+  fs.utimesSync(cache, justStale, justStale)
+  const res = runStatusline(MAIN_SL, stdin, tmp)
+  const seg = stripAnsi(res.stdout)
+  assert(res.status === 0, 'must exit 0')
+  assert(seg !== '', 'an unstamped finished wave must not vanish at the staleness cutoff')
+  assert(/· ran /.test(seg), `it reads as finished, not running, got "${seg}"`)
+  assert(!/· oldest/.test(seg), 'and must not claim anything is still running')
+  assert(!/\x1b\[10[236];30m/.test(res.stdout), 'tier backgrounds dropped, same as a stamped wave')
+
+  // The inferred duration is anchored at the last write, so it stops at roughly
+  // when the wave really ended rather than continuing to climb.
+  assert(/· ran 1:4\d|· ran 1:5\d/.test(seg), `clock frozen near the last write, got "${seg}"`)
+
+  // Past the window, an unstamped record goes quiet like a stamped one.
+  const longGone = new Date(Date.now() - 45000)
+  fs.utimesSync(cache, longGone, longGone)
+  const expired = runStatusline(MAIN_SL, stdin, tmp)
+  assert(expired.status === 0 && expired.stdout === '', 'past the window an unstamped wave goes quiet too')
+
+  // And a genuinely live record is still read as live, not as just-finished.
+  runStatusline(SUB_SL, JSON.stringify(SL_TASKS), tmp)
+  const live = stripAnsi(runStatusline(MAIN_SL, stdin, tmp).stdout)
+  assert(/· oldest /.test(live), `a fresh record is still live, got "${live}"`)
+})
+
 // --- Report ----------------------------------------------------------------
 
 Promise.all(pending).then(() => {
