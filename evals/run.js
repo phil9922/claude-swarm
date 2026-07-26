@@ -528,7 +528,7 @@ function main() {
         const r = runOnce({ testCase, arm, workdir, opts })
         if (!r.ok) {
           console.log(`FAILED (${r.subtype || r.error})`)
-          records.push({ case: testCase.name, arm: arm.name, run: i, ok: false, error: r.error || r.subtype })
+          records.push({ case: testCase.name, arm: arm.name, run: i, ok: false, error: r.error || r.subtype, wallMs: r.wall })
           continue
         }
         spent += r.cost
@@ -540,8 +540,11 @@ function main() {
           if (graded.graderCost) spent += graded.graderCost
         }
 
+        // Wall clock is the honest figure — `duration_ms` from `claude -p` is API
+        // time and undercounts badly when subagents run (63s api vs ~5min wall on
+        // one measured survey run). Report both, wall first.
         console.log(
-          `${money(r.cost)}  ${(r.durationMs / 1000).toFixed(1)}s  ${r.turns} turns  ` +
+          `${money(r.cost)}  ${(r.wall / 1000).toFixed(1)}s wall (${(r.durationMs / 1000).toFixed(1)}s api)  ${r.turns} turns  ` +
             `${r.spawns} spawns${graded && graded.score != null ? `  score ${graded.score}` : ''}`
         )
 
@@ -552,6 +555,7 @@ function main() {
           ok: true,
           cost: r.cost,
           durationMs: r.durationMs,
+          wallMs: r.wall,
           turns: r.turns,
           spawns: r.spawns,
           agents: r.agents,
@@ -594,6 +598,8 @@ function summarize(cases, arms, records) {
         totalDurationS: rs.reduce((a, r) => a + r.durationMs, 0) / 1000,
         minDurationS: Math.min(...rs.map((r) => r.durationMs)) / 1000,
         maxDurationS: Math.max(...rs.map((r) => r.durationMs)) / 1000,
+        meanWallS: mean(rs.map((r) => r.wallMs)) / 1000,
+        totalWallS: rs.reduce((a, r) => a + r.wallMs, 0) / 1000,
         meanTurns: mean(rs.map((r) => r.turns)),
         meanSpawns: mean(rs.map((r) => r.spawns)),
         zeroSpawnRuns: rs.filter((r) => r.spawns === 0).length,
@@ -622,7 +628,7 @@ function report(cases, arms, records, spent, stoppedEarly, outDir) {
     }
     console.log()
     console.log(
-      '  arm       claude-swarm             answers                  runs   mean cost      range            mean t   total t  turns  spawns  score'
+      '  arm       claude-swarm             answers                  runs   mean cost      range            wall t   total t  turns  spawns  score'
     )
     for (const a of arms) {
       const m = s.arms[a.name]
@@ -635,7 +641,7 @@ function report(cases, arms, records, spent, stoppedEarly, outDir) {
       console.log(
         `  ${a.name.padEnd(9)} ${pluginState.padEnd(24)} ${answers.padEnd(24)} ${String(m.runs).padStart(4)}   ${money(m.meanCost).padStart(9)}  ` +
           `${(money(m.minCost) + '–' + money(m.maxCost)).padStart(19)}  ` +
-          `${(m.meanDurationS.toFixed(0) + 's').padStart(6)}  ${(m.totalDurationS.toFixed(0) + 's').padStart(8)}  ` +
+          `${(m.meanWallS.toFixed(0) + 's').padStart(6)}  ${(m.totalWallS.toFixed(0) + 's').padStart(8)}  ` +
           `${m.meanTurns.toFixed(1).padStart(5)}  ` +
           `${m.meanSpawns.toFixed(1).padStart(6)}  ${m.meanScore == null ? '  —' : m.meanScore.toFixed(2)}`
       )
