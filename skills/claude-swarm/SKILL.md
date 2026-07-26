@@ -237,8 +237,10 @@ Mechanics worth knowing:
   integration re-derives every unit's truth from the tree: files present, filled,
   type-checked. Leaf gating uses the partial-order promise wiring above, on each
   unit's own `reads` set. Each leaf's type check is **sibling-filtered** — the
-  project command piped through a filter to its own files — so concurrent stubs'
-  errors can't burn its turns or inflate its repair count.
+  project command runs unfiltered, then its captured output is filtered to the
+  leaf's own files, with a broken tool reported as `TYPECHECK-BROKEN` rather than
+  read as clean — so concurrent stubs' errors can't burn a leaf's turns, and a
+  grader that failed to run can't book a unit as done.
 - Integration is split by grader: `mechanic` (sonnet·low) does everything the
   compiler grades — barrels, imports, seams — and only surfaced judgment calls
   escalate to `implementer` on opus. Shrinking that Opus tail is what raises the

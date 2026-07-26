@@ -607,6 +607,64 @@ checkAsync('build merges nested read-sets into one batch, owner listed first', a
     'the filter must name the batch-owned files')
 })
 
+/** Extract the leaf type-check script build.js generates for a given command. */
+async function leafScriptFor(typecheck) {
+  let promptText = ''
+  await runWorkflow('build.js', {
+    args: { typecheck, foundation: [], units: [{ id: 'a', owns: ['src/a.ts'], reads: [], builds: 'a' }] },
+    onAgent: async (prompt, opts) => {
+      if (opts.phase === 'Leaves') {
+        promptText = prompt
+        return { results: [{ unit: 'a', status: 'done', notes: '' }] }
+      }
+      return {
+        unitsVerified: [{ unit: 'a', filesPresent: true, nonEmpty: true }],
+        sharedFilesWritten: [],
+        fixed: [],
+        typecheck: 'pass',
+        judgment: [],
+      }
+    },
+  })
+  const m = /```sh\n([\s\S]*?)```/.exec(promptText)
+  assert(m, 'leaf prompt must carry the type check as a fenced sh block')
+  return m[1]
+}
+
+checkAsync('leaf type-check script: broken tooling is loud, clean is positive, exit is irrelevant', async () => {
+  // Executes the script build.js actually generates, against the two failure
+  // modes a bare `cmd | grep` gets wrong: a tool that fails to run must not
+  // read as a clean pass, and "grep found no errors" (grep exit 1) must not
+  // read as a failure.
+  const broken = spawnSync('bash', ['-c', await leafScriptFor('definitely-not-a-real-command-xyz --noEmit')], {
+    encoding: 'utf8',
+  })
+  assert(broken.status === 0, `script exit must always be 0, got ${broken.status}`)
+  assert(/TYPECHECK-BROKEN/.test(broken.stdout), 'a tool that failed to run must be reported broken')
+  assert(!/OWNED-FILES-CLEAN/.test(broken.stdout), 'tooling failure must never read as clean')
+
+  // Sibling-only errors with the tool exiting 1 (tsc's "diagnostics present"):
+  // the run is clean FOR THIS LEAF, and the old pipe's inverted exit code is gone.
+  const sibling = spawnSync(
+    'bash',
+    ['-c', await leafScriptFor(`sh -c 'echo "src/other.ts(1,1): error TS1111: sibling stub"; exit 1'`)],
+    { encoding: 'utf8' },
+  )
+  assert(sibling.status === 0, `clean-for-this-leaf must exit 0, got ${sibling.status}`)
+  assert(/OWNED-FILES-CLEAN/.test(sibling.stdout), 'sibling-only errors must yield the positive clean marker')
+  assert(!/src\/other\.ts/.test(sibling.stdout), 'sibling error lines must be filtered out')
+
+  // An error in an owned file must surface.
+  const own = spawnSync(
+    'bash',
+    ['-c', await leafScriptFor(`sh -c 'echo "src/a.ts(3,1): error TS2304: boom"; exit 1'`)],
+    { encoding: 'utf8' },
+  )
+  assert(own.status === 0, `own-error case must still exit 0, got ${own.status}`)
+  assert(/src\/a\.ts\(3,1\): error TS2304/.test(own.stdout), 'owned-file errors must pass the filter')
+  assert(!/OWNED-FILES-CLEAN/.test(own.stdout), 'an owned-file error must not read as clean')
+})
+
 checkAsync('build warns on a misspelled top-level key with the nearest valid one', async () => {
   // `foundations:` used to be silently ignored, cascading into N misleading
   // "neither in foundation nor owned" violations. The warning names the typo.

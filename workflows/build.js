@@ -298,9 +298,26 @@ async function withSlot(fn) {
 // discipline, pre-filtering the output is actual scoping — and chased sibling
 // errors would inflate the repair-cycle metric with contamination that can't
 // be separated from signature quality afterward.
+//
+// Capture-then-filter, not a bare pipe, because a pipe gets both edges wrong:
+// its exit status is grep's, which is 1 exactly when the run is clean (a leaf
+// checking $? sees failure and repairs nothing), and a tool that fails to run
+// at all ("tsc: command not found", a config error) emits no line matching an
+// owned path, so the pipe reads a broken grader as a clean pass. The script
+// runs the unfiltered command first, then branches: exit > 1 or a fileless
+// "error TS" diagnostic means the TOOL is broken (say so, dump the output);
+// otherwise filter to owned files, with a positive marker for clean. The
+// script's own exit status is always 0 — deliberately meaningless, so the
+// verdict can only be read from the output.
 function scopedCheck(batch) {
   const files = [...new Set(batch.flatMap((u) => u.owns.map(norm)))]
-  return `${TYPECHECK} 2>&1 | grep -F ${files.map((f) => `-e "${f}"`).join(' ')}`
+  const filter = files.map((f) => `-e "${f}"`).join(' ')
+  return `OUT=$(${TYPECHECK} 2>&1); CODE=$?
+if [ $CODE -gt 1 ] || printf '%s\\n' "$OUT" | grep -q "^error TS"; then
+  echo "TYPECHECK-BROKEN exit=$CODE"; printf '%s\\n' "$OUT" | head -30
+else
+  printf '%s\\n' "$OUT" | grep -F ${filter} || echo "OWNED-FILES-CLEAN"
+fi`
 }
 
 function leafPrompt(batch) {
@@ -330,14 +347,19 @@ types the signature never names — that is what your reads list is for — and 
 missing import is an expected, avoidable repair cycle, cheapest fixed at write
 time.
 
-Before returning, run this sibling-filtered type check (from ${ROOT}):
+Before returning, run this sibling-filtered type check (from ${ROOT}), exactly as
+written:
 
-  ${scopedCheck(batch)}
+\`\`\`sh
+${scopedCheck(batch)}
+\`\`\`
 
-Empty output means your files are type-clean — that is the bar for "done". The
-filter exists because other units are being filled concurrently and their stubs'
-errors are pre-filtered out: they are not yours, and you must not fix or chase
-them.
+Judge it by its OUTPUT ONLY — the script's exit status is deliberately meaningless:
+- "OWNED-FILES-CLEAN" → your files are type-clean; that is the bar for "done".
+- Error lines naming your files → yours to fix.
+- "TYPECHECK-BROKEN" → the type-check tooling itself failed. Do NOT claim done:
+  report status "failed" with the tool output in your notes.
+Sibling stubs' errors are pre-filtered out: they are not yours, never chase them.
 
 Return one result per unit above, by id. Be honest: "done" only if complete and
 type-clean in your files.`
