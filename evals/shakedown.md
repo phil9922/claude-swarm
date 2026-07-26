@@ -45,6 +45,14 @@ inside the generic 1.5–2.5x band. If foundation blows past ~40% of solo wall, 
 ratio indicts the spec sizing, not the width — record it as such rather than tripping
 the 1.3x falsifier on the wrong cause.
 
+> **Measured, 2026-07-26 run — this estimate was wrong.** The actual serial fraction
+> came in at **69.7%** (foundation 602s / 45.4%, leaf wave 402s / 30.3%, integration
+> 321s / 24.2%), with foundation alone consuming **60.4%** of the solo arm's entire
+> wall time. At ~70% serial, Amdahl caps the achievable speedup near **1.4x** regardless
+> of leaf width, so the 1.5–2.5x band above is arithmetically unreachable for this spec
+> as sized. This note records the measurement; it does not resize the spec or restate
+> the band — that call is the human's to make separately.
+
 ## The frozen plan
 
 The identical plan goes to **both arms**, verbatim. Plan quality varies run to run
@@ -57,8 +65,10 @@ directory, and never regenerate it.
 
 Build a client-only expense-splitting app in this Vite + React + TypeScript project.
 No backend, no persistence beyond an in-memory store seeded with demo data. All money
-is integer cents. `npx tsc --noEmit` must pass and `npm run build` must succeed when
-you are done.
+is integer cents. `npx tsc -p tsconfig.app.json --noEmit` must pass (the bare `npx tsc
+--noEmit` is not acceptable here: the Vite scaffold's root `tsconfig.json` is a solution
+file with `"files": []`, so it type-checks nothing and exits 0 regardless of errors) and
+`npm run build` must succeed when you are done.
 
 Data model: Members (id, name). Expenses (id, description, category id, payer,
 participants, total cents, date, split). A split is exactly one of: equal across
@@ -132,15 +142,15 @@ figure is uncontrolled and does not substitute for this arm.
 cd "$RUN_ROOT/ledgerline-solo"
 time CLAUDE_CODE_DISABLE_CLAUDE_MDS=1 claude -p "$(cat PLAN.md)
 
-Implement the entire plan now, solo. Run npx tsc --noEmit and fix all errors, then npm run build, before finishing." \
+Implement the entire plan now, solo. Run npx tsc -p tsconfig.app.json --noEmit and fix all errors, then npm run build, before finishing." \
   --settings "$SWARM/evals/arms/plugins-off.json" \
   --model opus --effort high --max-turns 200 --output-format json \
   --allowedTools Read Write Edit Glob Grep Bash > ../solo.json
 ```
 
-Record wall (from `time`), `total_cost_usd`, `num_turns`, final `npx tsc --noEmit`
-and `npm run build` exit codes (run them yourself afterward — the JSON's word for it
-is a claim, not evidence).
+Record wall (from `time`), `total_cost_usd`, `num_turns`, final `npx tsc -p
+tsconfig.app.json --noEmit` and `npm run build` exit codes (run them yourself afterward —
+the JSON's word for it is a claim, not evidence).
 
 **2. Leaf-tier probe, before the build arm.** An Opus-booked leaf wave voids the
 cost prediction rather than falsifying it — cheaper to catch now than after:
@@ -162,9 +172,11 @@ extra instruction *is* the intervention):
 
 ```bash
 cd "$RUN_ROOT/ledgerline-build"
+: > .claude-swarm-feed.log   # truncate: the §2 probe ran in this same directory and
+                             # already left a claude-swarm:leaf completion in here
 time CLAUDE_CODE_DISABLE_CLAUDE_MDS=1 claude -p "$(cat PLAN.md)
 
-Build this with the claude-swarm build flow: load the claude-swarm skill; write the foundation files, the signature stubs for every unit, and the work manifest; verify every foundation path and stub exists on disk; then run Workflow({ name: 'claude-swarm:build', args: <the manifest> }) and finish after integration. Timestamp (date -Is) into phase.log when you start the foundation, when you invoke the Workflow, and when integration ends." \
+Build this with the claude-swarm build flow: load the claude-swarm skill; write the foundation files, the signature stubs for every unit, and the work manifest; write the manifest to manifest.json in the project root before dispatching the Workflow; verify every foundation path and stub exists on disk; then run Workflow({ name: 'claude-swarm:build', args: <the manifest> }) and finish after integration. Timestamp (date -Is) into phase.log when you start the foundation, when you invoke the Workflow, and when integration ends." \
   --settings "$SWARM/evals/arms/plugins-off.json" \
   --plugin-dir "$SWARM" \
   --model opus --effort high --max-turns 200 --output-format json \
@@ -176,11 +188,13 @@ SessionStart policy and `claude-swarm:build` do not exist, and the command degra
 an expensive second solo run that fails at the Workflow call.
 
 Afterward collect: `build.json` (`total_cost_usd`, `modelUsage` per model),
+`manifest.json` (the persisted work manifest, written before the Workflow call),
 `.claude-swarm-feed.log` (per-agent completions with timestamps), `phase.log`,
 `git diff --stat` from the pre-run commit, and per-unit statuses from the workflow's
 returned `units` array (in the final result text).
 
-Then, same as the solo arm, **run `npx tsc --noEmit` and `npm run build` yourself** and
+Then, same as the solo arm, **run `npx tsc -p tsconfig.app.json --noEmit` and `npm run
+build` yourself** and
 record both exit codes. The template's table has a build column for those rows, and
 the run's own claim about them is not evidence — the arms have to be checked the same
 way or the comparison is not one.
@@ -204,7 +218,9 @@ Two template fields need a source the run does not hand you:
 Leaf wave = Workflow invocation → last `claude-swarm:leaf` line in the feed.
 Integration = last leaf line → integration end. Feed timestamps are completions, not
 starts, so the split is approximate — say so in the record rather than presenting it
-as exact.
+as exact. Belt-and-braces: even with the pre-run truncation above, filter every feed
+entry to timestamps ≥ the build arm's own start time before computing the split, in
+case anything else wrote to the log first.
 
 **5. Record, then score.** Fill the template below and save it as
 `evals/shakedown-results.md` — deliberately outside the gitignored `results/`, so
@@ -243,22 +259,25 @@ Interventions (what was said, when — "none" if none):
 | wall total | | |
 | cost (total_cost_usd) | | |
 | turns (main) | | |
-| final tsc exit | | |
+| final tsc -p tsconfig.app.json exit | | |
 | npm run build exit | | |
 
 Build arm only:
 - Phase split (approx, method §4): foundation ___ / leaf wave ___ / integration ___
 - Measured serial fraction (foundation+integration)/total: ___ (expected 35–40%)
 - modelUsage: leaf-wave tokens booked to: ______ (Sonnet required; Opus ⇒ cost line VOID)
-- Units: total ___  done ___  partial ___  failed ___  unknown ___
+- Units (source: the persisted `manifest.json`, §3): total ___  done ___  partial ___
+  failed ___  unknown ___
 - Repair cycles per unit (from the copied subagent transcripts, §3; count typecheck-fix
   loops — write `not collected` if the transcripts were not kept):
   unit / cycles: ...
   import-extension occurrences among them: ___
 - Integration rework: shared files written (expected): ___
-  leaf-owned files integration MODIFIED (the metric): ___ of ___
-- Manifest: valid on first try? y/n — if no, violations verbatim (§3: live from the
-  final text, or reproduced afterward — say which) + minutes to fix: ___
+  leaf-owned files integration MODIFIED (the metric, cross-referenced against
+  `manifest.json`'s `owns` lists): ___ of ___
+- Manifest (source: the persisted `manifest.json`, §3): valid on first try? y/n — if no,
+  violations verbatim (§3: live from the final text, or reproduced afterward — say
+  which) + minutes to fix: ___
 
 Prediction scoring (README, "Recorded prediction: the first build run"):
 - wall 1.5–2.5x (spec-adjusted 1.6–2.3x): measured ___ → confirmed/falsified
