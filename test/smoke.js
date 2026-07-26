@@ -627,6 +627,66 @@ checkAsync('build runs leaves in dependency order, then integration', async () =
   assert(labels.includes('integrate:mechanic'), 'integration must run')
 })
 
+// CONCURRENCY must not throttle the one phase fan-out exists to speed up. The
+// first measured run (evals/shakedown-results.md) had 14 independent units
+// against a fixed default of 8, so the leaf wave queued into roughly two
+// slot-waves for no reason. Asserted behaviourally — how many leaves are
+// actually in flight at once — rather than by reading the logged number, so the
+// check pins what the dial DOES and not what it says.
+checkAsync('build does not throttle a wave below its own width', async () => {
+  const mkUnits = (n) =>
+    Array.from({ length: n }, (_, i) => ({
+      id: `u${i}`,
+      owns: [`src/u${i}.ts`],
+      reads: ['src/types.ts'], // foundation only — no unit depends on another
+      builds: `unit ${i}`,
+    }))
+
+  /** Run N independent units and report the peak number of concurrent leaves. */
+  const peakLeaves = async (units, concurrency) => {
+    let active = 0
+    let peak = 0
+    await runWorkflow('build.js', {
+      args: {
+        typecheck: 'tsc',
+        foundation: ['src/types.ts'],
+        units,
+        ...(concurrency == null ? {} : { concurrency }),
+      },
+      onAgent: async (prompt, opts) => {
+        if (opts.phase === 'Leaves') {
+          active++
+          peak = Math.max(peak, active)
+          // Hold the slot so genuinely concurrent leaves overlap in time; a
+          // throttled wave cannot reach the full width during this window.
+          await new Promise((r) => setTimeout(r, 25))
+          active--
+          const id = /leaf:(.+)/.exec(opts.label)[1]
+          return { results: [{ unit: id, status: 'done', notes: '' }] }
+        }
+        return {
+          unitsVerified: units.map((u) => ({ unit: u.id, filesPresent: true, nonEmpty: true })),
+          sharedWritten: [],
+          judgment: [],
+          typecheck: 'pass',
+        }
+      },
+    })
+    return peak
+  }
+
+  // Ten independent units, no explicit dial: all ten should be in flight.
+  // Under the old fixed default of 8 this peaks at 8.
+  assert((await peakLeaves(mkUnits(10), undefined)) === 10, 'ten independent units must run ten leaves at once')
+
+  // The explicit override still wins, and still throttles — that is its job.
+  assert((await peakLeaves(mkUnits(10), 3)) === 3, 'an explicit concurrency must still cap the wave')
+
+  // Above the cap the default stops growing, so a very wide manifest cannot
+  // dispatch unboundedly.
+  assert((await peakLeaves(mkUnits(20), undefined)) === 12, 'the default is bounded for very wide manifests')
+})
+
 checkAsync('build batches units with an identical read-set into one leaf', async () => {
   let leafCalls = 0
   const m = {

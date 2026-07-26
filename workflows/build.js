@@ -42,7 +42,24 @@ const UNITS = Array.isArray(input.units) ? input.units : []
 // fewer cold starts (cost down), longer serial chains inside a branch (wall up).
 // Raise BATCH / lower CONCURRENCY to trade wall time for cost; the defaults
 // favor wall time, which is what this workflow exists to buy.
-const CONCURRENCY = Number.isInteger(input.concurrency) && input.concurrency > 0 ? input.concurrency : 8
+//
+// CONCURRENCY defaults to the unit count, not a constant. A fixed default
+// throttles the only phase fan-out can speed up: the first measured run
+// (evals/shakedown-results.md) decomposed into 14 units against a default of 8,
+// so the leaf wave queued into roughly two slot-waves on a machine whose
+// harness cap — min(16, cores-2) — allowed 14 at once. Since batching can only
+// merge units into FEWER agents, the unit count is a safe upper bound on agents
+// in flight, and this default therefore never queues; it only stops a very wide
+// manifest from dispatching unboundedly. Set it explicitly to go LOWER, trading
+// wall time for cost. The harness applies its own cap regardless, so a value
+// above that is quietly moot rather than harmful.
+const CONCURRENCY_CAP = 12
+const CONCURRENCY =
+  Number.isInteger(input.concurrency) && input.concurrency > 0
+    ? input.concurrency
+    : // max(...,1) matters: an empty manifest would otherwise yield 0, and
+      // withSlot's `while (active >= CONCURRENCY)` would never admit anyone.
+      Math.min(Math.max(UNITS.length, 1), CONCURRENCY_CAP)
 const BATCH = Number.isInteger(input.batch) && input.batch > 0 ? input.batch : 1
 if (input.concurrency != null && !(Number.isInteger(input.concurrency) && input.concurrency > 0))
   log(`ignoring invalid concurrency=${JSON.stringify(input.concurrency)}; using ${CONCURRENCY}`)
@@ -475,6 +492,11 @@ turn-capped leaf returns nothing at all):
 ${unitTable}
 
 1. Per unit: do all its owned files exist, and are they filled rather than stubs?
+   Establish this with ONE cheap sweep over the owned paths — sizes plus a search
+   for the placeholder marker ("not implemented") — not by reading each file. You
+   are the only agent running at this point, so every file you read is serial wall
+   time spent before any fixing starts. Open only what the sweep flags: missing,
+   suspiciously small, or still carrying the placeholder.
 2. Write the shared files leaves were forbidden to touch: barrels/index files, the
    route registry, anything that aggregates the units. List what you wrote.
 3. Run \`${TYPECHECK}\` from ${ROOT}. Fix what the compiler grades — imports, paths,

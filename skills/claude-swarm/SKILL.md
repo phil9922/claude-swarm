@@ -173,7 +173,7 @@ directory — so they resolve under the plugin's namespace:
 - **`claude-swarm:build`** — the leaf and integration waves of an app build from a
   finalized plan. The master writes the foundation, the signature stubs, and a work
   manifest first, then:
-  `Workflow({ name: 'claude-swarm:build', args: { typecheck: 'npx tsc --noEmit', foundation: [...], units: [...] } })`
+  `Workflow({ name: 'claude-swarm:build', args: { typecheck: '<a grader you proved fails on a real error>', foundation: [...], units: [...] } })`
 
 Pass the target through `args`, not as a second positional argument — `Workflow` takes
 a single input object.
@@ -191,9 +191,27 @@ stub that doesn't type-check starts its leaf from red, and leaves fill blanks
 instead of interpreting prose), and the manifest. The manifest is the public
 interface between master and workflow:
 
+**Keep the foundation to what leaves cannot start without.** Everything the master
+writes is paid at full wall cost in a phase no fan-out can shorten, so the foundation's
+size sets the ceiling on the whole run. It should be contracts, not implementations:
+shared *types*, tokens, the signature stubs, the manifest. A module with a clear
+contract and its own file — a money/units library, a validation module, aggregation
+helpers — is a **unit**, not foundation, even though it feels foundational because
+others import it. Declare it as a unit that others `reads`, and the dependency gating
+will order it correctly for free.
+
+This is measured, not stylistic. In the first real run (`evals/shakedown-results.md`)
+the foundation phase took **602s — 45% of the whole build, and 60% of the entire solo
+baseline** — writing 26 files: 14 signature stubs plus 12 shared files that included
+fully implemented cents math, balance folding, filtering, stats aggregation and
+validation. Those five had contracts and could have been units. The leaf wave that ran
+in parallel got the presentational components instead, so the serial phase did the hard
+work and the parallel phase did the easy work — which is the shape that made the run
+land **slower than solo**.
+
 ```js
 Workflow({ name: 'claude-swarm:build', args: {
-  typecheck: 'npx tsc --noEmit',   // the grader; leaves and integration both run it
+  typecheck: 'npx tsc -p tsconfig.app.json --noEmit', // the grader; leaves and integration both run it
   root: '.',                       // optional
   foundation: ['src/types.ts'],    // shared read-only files the master wrote, on disk
   units: [{
@@ -202,10 +220,27 @@ Workflow({ name: 'claude-swarm:build', args: {
     reads: ['src/tokens.css'],           // foundation or other units' paths — drives ordering
     builds: 'site header with nav',
   }],
-  concurrency: 8,                  // max leaf agents in flight
-  batch: 1,                        // units per agent when one read-set contains another's
+  // concurrency: 8,               // optional; defaults to the unit count. Set it only to go LOWER.
+  // batch: 1,                     // optional; units per agent when one read-set contains another's
 }})
 ```
+
+**Prove the grader actually grades, before you dispatch.** `typecheck` is handed to
+every leaf and to integration, so a command that silently checks nothing turns the
+whole wave into unverified work. This is not hypothetical: in a Vite scaffold the root
+`tsconfig.json` is a solution file with `"files": []`, so the obvious
+`npx tsc --noEmit` **exits 0 on any source, including source with type errors** —
+measured 2026-07-26 by planting an error and watching it pass. Project-scoped
+(`-p tsconfig.app.json`) or `npm run build` (which runs `tsc -b`) do grade. Plant a
+deliberate type error, confirm the command fails, remove it. A vacuous grader does not
+just cost correctness — it relocates the errors into the serial integration pass,
+which is the phase fan-out cannot speed up.
+
+`concurrency` defaults to the number of units, so the leaf wave is not throttled below
+the width you asked for; batching can only merge units into fewer agents, never more.
+Set it explicitly only to *reduce* parallelism and trade wall time for cost. The
+harness caps concurrent agents at `min(16, cores - 2)` regardless, so a larger value is
+moot rather than harmful.
 
 **Precondition — the validator structurally cannot check this.** Every `foundation`
 path, and every owned signature stub, must exist on disk *before* invoking: workflow
