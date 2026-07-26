@@ -27,6 +27,11 @@ still untouched.
 - The segment's label is branded once, on that line, rather than per row: with no
   agent identity in the payload, an individual row cannot honestly claim to be a
   claude-swarm agent.
+- **Rows are indented so the two displays read as one block** — the status line
+  renders directly above the agent panel, so the segment becomes the header and the
+  agents nest under it. The indent comes out of the row's own width budget, not out of
+  `columns`, and yields before the badge does: at `columns: 8` and below it is dropped
+  entirely, since an indent of spaces would otherwise clip the badge to whitespace.
 
 ### Fixed
 - **The badge names the model tier instead of the agent, because the payload carries

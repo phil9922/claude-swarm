@@ -65,6 +65,7 @@ const TIER_BADGE = {
   opus: 'OPUS',
 }
 const BADGE_W = 6
+const ROW_INDENT = '  '
 const BAR_CELLS = 8
 const MIN_LABEL = 6
 const MAX_LABEL = 24
@@ -155,7 +156,14 @@ function renderRow(task, columns, sharedLabelW) {
 
   // Drop order under a tight `columns`: context bar first, then the label,
   // then elapsed. The badge never drops.
-  const width = Number.isFinite(columns) && columns > 0 ? columns : 80
+  // Rows are indented so they read as a list nested under the main status line's
+  // `claude-swarm` segment, which renders directly above the panel. The indent
+  // comes out of the row's own width budget, never out of `columns`.
+  // The indent yields before the badge does: on a panel too narrow to hold both,
+  // an indent made of spaces would clip the badge down to whitespace.
+  const outer = Number.isFinite(columns) && columns > 0 ? columns : 80
+  const indent = outer >= badgePlain.length + ROW_INDENT.length ? ROW_INDENT : ''
+  const width = Math.max(0, outer - indent.length)
   let bar = barPlain
   let elapsed = elapsedPlain
   let label = rawLabel || null
@@ -184,7 +192,7 @@ function renderRow(task, columns, sharedLabelW) {
     labelCol = label.length > labelW ? `${label.slice(0, labelW - 1)}…` : label.padEnd(labelW)
   }
 
-  const parts = [`${badge.color}${badgeShown}${RESET}`]
+  const parts = [`${indent}${badge.color}${badgeShown}${RESET}`]
   if (labelCol) parts.push(live ? labelCol : `${DIM}${labelCol}${RESET}`)
   if (elapsed) parts.push(elapsedWeight ? `${elapsedWeight}${elapsed}${RESET}` : elapsed)
   if (bar) parts.push(bar)

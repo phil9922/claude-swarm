@@ -207,13 +207,20 @@ goes quiet as soon as it exists.
 ### Live swarm display
 
 While a wave runs, the agent panel below the prompt shows one row per running
-subagent, badged by the model it resolved to:
+subagent, badged by the model it resolved to. With the status line segment below
+installed, the two read as one block — a labelled header and the agents nested under
+it:
 
 ```
-  SONNET  Fill PriceBreakdown     1:24  ███░░░░░ 42%
-  HAIKU   find call sites         0:51  █░░░░░░░ 18%
-  OPUS    Wire the integration    2:03  ██████░░ 71%
+claude-swarm  1H  1S  1O  · oldest 2:03
+   HAIKU    find call sites       0:51  █░░░░░░░ 18%
+   SONNET   Fill PriceBreakdown   1:24  ███░░░░░ 42%
+   OPUS     Wire the integration  2:03  ██████░░ 71%
 ```
+
+The rows are indented for exactly that reason. The indent comes out of the row's own
+width budget rather than out of `columns`, and it is dropped before the badge is on a
+panel too narrow to hold both.
 
 **The badge names the model tier, because that is the only identity the payload
 carries.** Measured on Claude Code 2.1.220: every row's `type` is the constant
