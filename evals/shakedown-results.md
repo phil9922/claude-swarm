@@ -47,12 +47,11 @@ Build arm only:
 - **modelUsage**: leaf-wave tokens booked to **Sonnet** — `claude-sonnet-5` $2.2381 (44,161
   output tokens) alongside `claude-opus-5` $5.7758 (87,018 output). **The cost line is NOT
   void**; the tier pin held, as the §2 probe predicted.
-- **Units**: total **not collected** / done — / partial — / failed — / unknown **not collected**.
-  The workflow's `units` array is not in the final result text (the master's closing message is
-  a verification report instead), and the manifest was passed as `args` and never written to
-  disk, so unit count cannot be recovered. The feed log carries **14 `claude-swarm:leaf`** and
-  **1 `claude-swarm:mechanic`** completion for 10 spec units — consistent with batching or
-  retries, but not decidable without the manifest.
+- **Units** *(recovered 2026-07-26 after the feed-capture fix — see "Recovered metrics" below)*:
+  total **14** / done **14** / partial **0** / failed **0** / unknown **0**. The master
+  decomposed into 14 units rather than the spec's 10, adding the app shell and three view
+  containers. The 15th workflow agent is the integration mechanic, which returns a different
+  schema and is not a unit.
 - **Repair cycles per unit**: **not counted** (transcripts *were* preserved — 19 `.jsonl` files
   at `/home/pk/shakedown/transcripts-build` — so this is recoverable, just not yet done).
   import-extension occurrences among them: not counted.
@@ -71,11 +70,37 @@ Build arm only:
   booked to Sonnet as required.
 - **integration rework < ~1/3 of leaf files**: **not collected** (no manifest).
 - **repair cycles ≤ ~1/unit**: **not collected** (transcripts kept, not yet counted).
-- **unknown ≤ ~1 in 6**: **not collected** — and the feed cannot answer it. Every entry,
-  including the mechanic's, recorded `(no output)`. Fifteen silent agents is far less likely
-  than the hook failing to capture final messages, so this reads as a **defect in
-  `hooks/subagent-stop.js`'s capture**, not as 15 unknowns. Treating it as an unknown count
-  would be a fabricated number.
+- **unknown ≤ ~1 in 6**: measured **0 of 14** → **CONFIRMED**. Recovered post-hoc; see below.
+
+## Recovered metrics — the `(no output)` finding, resolved
+
+The original reading here was that every feed entry recording `(no output)` looked more like a
+capture defect than like 15 silent agents, so the `unknown` rate was recorded as *not collected*
+rather than guessed. That judgement held up, and the cause turned out to be specific.
+
+`last_assistant_message` is present in the `SubagentStop` payload **only when the subagent's
+final turn ends in prose**. When it ends by calling `StructuredOutput` — which every
+schema-constrained workflow `agent()` does — the key is **absent entirely**, so the hook logged
+`(no output)` for the entire leaf wave. The one entry that did carry text (09:14) was the §2
+probe, a plain `Task` spawn. That split is exactly the symptom.
+
+Fixed in `hooks/subagent-stop.js` (0.2.8): when the payload carries no message, read the final
+assistant message out of `agent_transcript_path`, grouped by `message.id`, and fall back to a
+compact JSON of the `StructuredOutput` input. Replaying the fixed hook over the 16 preserved
+transcripts from this run yields **16 lines, 0 of them `(no output)`**, and the per-unit status
+becomes greppable straight off the feed.
+
+**These numbers are recovered, not live.** They come from transcripts preserved after the run,
+using a hook that did not exist while the run executed. That is legitimate — the data was always
+in the transcripts, only the feed was blind to it — but it is a different provenance from the
+wall and cost figures above, which were measured as the run happened. Anything still marked *not
+collected* below is genuinely unrecoverable, not merely un-attempted:
+
+- **Repair cycles per unit** — recoverable in principle from the same transcripts (count the
+  typecheck-fix loops), not yet counted.
+- **Integration rework** and **manifest validity** — still unrecoverable. Both need the
+  manifest's `owns` lists, and the manifest was never written to disk. Fixed in the protocol for
+  next time, but it cannot be reconstructed for this run.
 
 ## Attribution: why the wall result is not a clean verdict on width
 

@@ -128,6 +128,105 @@ check('subagent-stop appends a feed line and exits 0', () => {
   }
 })
 
+// Runs the feed hook against a scratch project dir and returns the message column
+// of the single line it appended. `transcript` (if given) is written as the
+// subagent's own transcript and its path handed to the hook the way Claude Code
+// does. Asserts the exit-0 contract on every call, since every case must hold it.
+function feedMessage(payload, transcript) {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-smoke-'))
+  try {
+    if (transcript) {
+      const p = path.join(tmp, 'agent-abc.jsonl')
+      fs.writeFileSync(p, transcript.map((r) => JSON.stringify(r)).join('\n') + '\n')
+      payload = { ...payload, agent_transcript_path: p }
+    }
+    const res = spawnSync(process.execPath, [FEED_HOOK], {
+      input: JSON.stringify(payload),
+      encoding: 'utf8',
+      env: { ...process.env, CLAUDE_PROJECT_DIR: tmp },
+    })
+    assert(res.status === 0, `must exit 0, got ${res.status}`)
+    const feed = fs.readFileSync(path.join(tmp, '.claude-swarm-feed.log'), 'utf8')
+    return feed.trim().split('\t')[2]
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true })
+  }
+}
+
+// Shaped after transcripts captured live from Claude Code 2.1.220. Two facts the
+// fix turns on: the transcript writes ONE assistant message as a record per
+// content block (same `message.id`), and a schema-constrained agent ends its turn
+// with a `StructuredOutput` tool_use rather than prose.
+const asst = (id, content) => ({
+  type: 'assistant',
+  isSidechain: true,
+  message: { id, type: 'message', role: 'assistant', content, stop_reason: 'tool_use' },
+})
+const toolResult = () => ({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', content: 'ok' }] } })
+
+check('subagent-stop recovers the final message when the payload omits it', () => {
+  // The bug this guards: on 2.1.220 a subagent that ends its turn via
+  // StructuredOutput gets NO `last_assistant_message` key in the SubagentStop
+  // payload at all — verbatim from a live capture, the keys were
+  // session_id, transcript_path, cwd, prompt_id, permission_mode, agent_id,
+  // agent_type, effort, hook_event_name, stop_hook_active, agent_transcript_path,
+  // background_tasks, session_crons. Every line of a 15-agent build wave read
+  // "(no output)" as a result. The final message is still in the agent's own
+  // transcript, which the payload does always name.
+  const said = feedMessage({ agent_type: 'claude-swarm:mechanic' }, [
+    asst('msg_1', [{ type: 'text', text: 'earlier narration that is not the final word' }]),
+    toolResult(),
+    asst('msg_2', [{ type: 'text', text: 'Build and typecheck both pass cleanly with no changes required.' }]),
+    asst('msg_2', [{ type: 'tool_use', id: 't1', name: 'StructuredOutput', input: { typecheck: 'pass' } }]),
+    toolResult(),
+  ])
+  assert(
+    said === 'Build and typecheck both pass cleanly with no changes required.',
+    `the final message must be recovered from the transcript, got "${said}"`,
+  )
+})
+
+check('subagent-stop reports a structured return rather than calling it silence', () => {
+  // 11 of the 15 agents in that wave closed with StructuredOutput and no prose.
+  // They returned a full result — logging that as "(no output)" is what made the
+  // eval's `unknown` rate uncollectable.
+  const said = feedMessage({ agent_type: 'claude-swarm:leaf' }, [
+    asst('msg_1', [
+      { type: 'tool_use', id: 't1', name: 'StructuredOutput', input: { results: [{ unit: 'expense-row', status: 'done' }] } },
+    ]),
+    toolResult(),
+  ])
+  assert(said !== '(no output)', 'a structured return is output, not silence')
+  assert(/expense-row/.test(said) && /done/.test(said), `the structured result must be summarized, got "${said}"`)
+})
+
+check('subagent-stop still reports a genuinely silent agent as silent', () => {
+  // A turn-capped subagent stops inside a tool call and returns nothing. build.js
+  // scores that as `unknown`, so the feed must not manufacture a message out of
+  // mid-run narration — the last message is the only thing that counts.
+  const said = feedMessage({ agent_type: 'claude-swarm:leaf' }, [
+    asst('msg_1', [{ type: 'text', text: 'Now I will write the component.' }]),
+    toolResult(),
+    asst('msg_2', [{ type: 'tool_use', id: 't2', name: 'Edit', input: { file_path: 'src/a.ts' } }]),
+    toolResult(),
+  ])
+  assert(said === '(no output)', `a turn-capped agent must stay distinguishable, got "${said}"`)
+})
+
+check('subagent-stop prefers the payload message and survives a missing transcript', () => {
+  const said = feedMessage({ agent_type: 'claude-swarm:leaf', last_assistant_message: 'BANANA SPLIT' }, [
+    asst('msg_1', [{ type: 'text', text: 'transcript text that must not win' }]),
+  ])
+  assert(said === 'BANANA SPLIT', `the payload message must win when present, got "${said}"`)
+  const gone = feedMessage({
+    agent_type: 'claude-swarm:leaf',
+    agent_transcript_path: '/nonexistent/dir/agent-nope.jsonl',
+  })
+  assert(gone === '(no output)', `an unreadable transcript must not crash the hook, got "${gone}"`)
+  const junk = feedMessage({ agent_type: 'claude-swarm:leaf' }, [{ type: 'assistant' }, { type: 'user' }])
+  assert(junk === '(no output)', `a transcript with no usable message must not crash, got "${junk}"`)
+})
+
 check('subagent-stop swallows garbage input — exit 2 would block the subagent', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-smoke-'))
   try {

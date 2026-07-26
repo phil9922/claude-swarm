@@ -7,6 +7,56 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html): the git tag
 
 ## [Unreleased]
 
+## [0.2.8] — 2026-07-26
+
+### Fixed
+- **The completion feed recorded `(no output)` for every schema-constrained agent.** In the
+  first shakedown run all 15 workflow agents logged `(no output)` — including the integration
+  mechanic, which certainly produced output. That blinded the eval's `unknown` rate, which had
+  to be recorded as *not collected* rather than guessed.
+
+  Captured from the live payload on 2.1.220 rather than inferred: `SubagentStop` carries
+  `last_assistant_message` **only when the subagent's final turn ends in prose**. When the turn
+  ends by calling `StructuredOutput` — which every schema-constrained workflow `agent()` does —
+  the key is **absent from the payload entirely**, not empty. The one entry in that run which
+  did carry text was a plain `Task` spawn, which is exactly the predicted split.
+
+  The payload does always carry `agent_transcript_path`. The hook now reads the tail of that
+  transcript when the message is missing and takes the **final** assistant message, grouped by
+  `message.id` because the transcript splits one message across a record per content block. If
+  that message carries no prose but does carry a `StructuredOutput` call, its input is logged as
+  compact JSON — for a schema-constrained agent that *is* the return value, and calling it
+  silence is what broke the metric.
+
+  Scoping to the final message is load-bearing: a turn-capped agent that stopped inside a tool
+  call has mid-run narration in its transcript, and scanning the whole file would manufacture a
+  message for an agent that genuinely returned nothing. Real silence still logs `(no output)`,
+  because the build workflow acts on that signal and it must stay distinguishable from a quiet
+  finish.
+
+  Verified by replaying the fixed hook over the 16 transcripts preserved from the shakedown:
+  **16 lines, 0 still `(no output)`**, and the per-unit `status` is now greppable off the feed.
+  That recovered the run's unit counts — 14 units, all `done`, **0 unknown** — which scores a
+  pre-registered prediction line that had been unscoreable.
+
+  The hook's hard contracts are unchanged: it still exits 0 unconditionally (exit 2 on
+  `SubagentStop` blocks the subagent), still swallows every failure, and the transcript read is
+  wrapped in its own `try` inside the existing one. It reads only; it writes nothing outside the
+  project directory.
+
+### Changed
+- **The feed's documented contract widened**, deliberately and not silently: a line is now the
+  first line of the final message *or* a compact JSON of the structured return. The header
+  states both cases and why.
+
+### Tests
+- **Smoke checks 67 → 71**: recovery from the transcript, a structured return not being counted
+  as silence, a turn-capped agent staying silent, and the payload message winning over the
+  transcript with an unreadable/junk transcript tolerated. All four mutation-tested — deleting
+  the fallback fails two, scanning all assistant text instead of the final message fails two
+  (it manufactures mid-run narration), dropping the structured summary fails one, and removing
+  the inner `try` fails one by writing no feed line at all.
+
 ## [0.2.7] — 2026-07-26
 
 ### Fixed
