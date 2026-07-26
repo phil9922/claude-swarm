@@ -7,6 +7,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html): the git tag
 
 ## [Unreleased]
 
+## [0.2.3] — 2026-07-26
+
 **First live run of the swarm display, and both of 0.2.2's open risks resolved — one
 of them against us.** Nothing outside the two status line scripts, their tests, and
 their docs changed; the shakedown protocol and the pre-registered predictions are
@@ -476,7 +478,8 @@ Initial release.
 - **Smoke test and GitHub Actions CI** — static validation of the manifests,
   runtime checks of the hook contract, and compile checks of the workflow scripts.
 
-[Unreleased]: https://github.com/phil9922/claude-swarm/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/phil9922/claude-swarm/compare/v0.2.3...HEAD
+[0.2.3]: https://github.com/phil9922/claude-swarm/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/phil9922/claude-swarm/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/phil9922/claude-swarm/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/phil9922/claude-swarm/compare/v0.1.4...v0.2.0
