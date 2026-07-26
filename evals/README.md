@@ -96,6 +96,47 @@ context that produced a finding is biased toward confirming it. If graded qualit
 back no better than solo, audit has no measured claim left, neither cheaper nor better, and
 the workflow-labels table in `SKILL.md` must say so.
 
+## Recorded prediction: the first build run
+
+*Written 2026-07-25, before `claude-swarm:build` has run against any real spec. Score each
+line after the run; don't edit them.*
+
+The README's "roughly 2x faster at neutral cost" is reasoning from the serial fraction, not
+a measurement. Against a solo-Opus run of the same spec under the same session conditions
+(the solo arm runs first — see `shakedown.md`):
+
+- **Wall time: 1.5–2.5x faster than solo.** The ceiling is the serial fraction — foundation
+  before the wave, integration after — so ~2x is the target, and above ~3x means the
+  serial-fraction estimate was too pessimistic, which is also a finding. **Falsifier:**
+  below ~1.3x, width isn't paying for its own dispatch overhead and Build's headline claim
+  fails.
+- **Cost: within ~±25% of solo.** Neutrality depends entirely on the leaf wave running
+  Sonnet — fan-out is never cheaper at equal tier. **Void, not falsified**, if the run's
+  `modelUsage` shows leaf tokens booked against Opus: that is a tier-pin failure to fix and
+  re-run, not evidence about the design. With Sonnet leaves confirmed, cost materially
+  above solo means per-leaf cold starts dominate — units too small; the `batch` dial exists
+  for exactly this.
+- **Integration rework: the mechanic modifies few leaf-owned files** beyond writing the
+  shared ones (barrels, the route registry). This is the direct test of
+  signatures-not-prose. Errors a leaf repaired itself never reach integration, so the
+  metric stays clean — count self-repairs separately, below. **Falsifier:** integration
+  rewriting more than about a third of leaf-owned files falsifies the premise that fixed
+  signatures prevent integration drift, which is the design's highest-value claim.
+- **Repair cycles: about one per unit or fewer, on average.** This is the home of the
+  import-extension error class (measured in F1; a write-time instruction was added in
+  F1c). Frequency here speaks to turn-budget consumption and to whether that instruction
+  landed — it says nothing about signature quality, because reaching below the contract
+  surface for types the signature never names is normal implementation behavior. The turn
+  arithmetic to watch: write-only measured 5–6 turns of 25, and one repair cycle measured
+  6, so **a unit needing three repair cycles is approaching the cap — and the cap fails
+  silently, so from the outside that looks like `status: 'unknown'`.**
+- **Per-unit outcomes: nearly all `done`; at most ~1 in 6 `unknown` or `failed`.**
+  `unknown` above that rate means leaves are hitting the silent cap or dying unreported
+  often enough that the status field is unreliable in exactly the way it was built to
+  detect — revisit `maxTurns` or unit sizing before quoting any other number from the run.
+
+Any falsifier firing is a finding about the design to fix, not noise to re-run away.
+
 ## Running it
 
 ```bash

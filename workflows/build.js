@@ -38,7 +38,7 @@ const UNITS = Array.isArray(input.units) ? input.units : []
 // leaf agents run at once — backpressure the raw promise wiring below must
 // supply itself, because pipeline()/parallel() applied it for us and Promise.all
 // does not, and a wide manifest dispatching every ready unit at once would slam
-// the per-run cap. BATCH merges units with an identical read-set into one agent:
+// the per-run cap. BATCH merges units whose read-sets nest into one agent:
 // fewer cold starts (cost down), longer serial chains inside a branch (wall up).
 // Raise BATCH / lower CONCURRENCY to trade wall time for cost; the defaults
 // favor wall time, which is what this workflow exists to buy.
@@ -192,16 +192,37 @@ const LEAF_RESULT = {
   },
 }
 
-// Batch by *identical* read-set: the point of batching is a genuinely shared
-// cached prefix, so near-miss clustering is deliberately not attempted.
-const byReads = new Map()
-for (const u of UNITS) {
-  const key = [...new Set((u.reads || []).map(norm))].sort().join('\n')
-  if (!byReads.has(key)) byReads.set(key, [])
-  byReads.get(key).push(u)
+// Batch by nested read-sets: cache benefit comes from a shared PREFIX, not set
+// equality, so a unit may join a batch whose base read-set contains its own.
+// Widest read-sets seed the batches so the broadest set defines each base; the
+// prompt then lists shared reads first so the common portion is read before
+// anything branch-specific.
+const readsOf = (u) => [...new Set((u.reads || []).map(norm))]
+const protoBatches = []
+for (const u of [...UNITS].sort((a, b) => readsOf(b).length - readsOf(a).length)) {
+  const rs = readsOf(u)
+  const home = protoBatches.find((b) => b.units.length < BATCH && rs.every((r) => b.base.has(r)))
+  if (home) home.units.push(u)
+  else protoBatches.push({ base: new Set(rs), units: [u] })
 }
-const batches = []
-for (const group of byReads.values()) for (let i = 0; i < group.length; i += BATCH) batches.push(group.slice(i, i + BATCH))
+// Subset merging can put an owner and its reader in the same agent, so order
+// each batch owner-first — the prompt tells the leaf the list is build order.
+const batches = protoBatches.map(({ units }) => {
+  const ids = new Set(units.map((u) => u.id))
+  const ordered = []
+  const placed = new Set()
+  const place = (u) => {
+    if (placed.has(u.id)) return
+    placed.add(u.id)
+    for (const n of (u.reads || []).map(norm)) {
+      const d = owner.get(n)
+      if (d && ids.has(d) && d !== u.id) place(units.find((x) => x.id === d))
+    }
+    ordered.push(u)
+  }
+  units.forEach(place)
+  return ordered
+})
 
 // One deferred per unit, so every batch gates on exactly the owners of its own
 // reads — the partial ordering pipeline() cannot express. Owners settle whether
@@ -228,6 +249,8 @@ async function withSlot(fn) {
 }
 
 function leafPrompt(batch) {
+  const shared =
+    batch.length > 1 ? readsOf(batch[0]).filter((r) => batch.every((u) => readsOf(u).includes(r))) : []
   const units = batch
     .map(
       (u) =>
@@ -235,13 +258,21 @@ function leafPrompt(batch) {
     )
     .join('\n\n')
   return `You are one leaf of a build wave. Project root: ${ROOT}.
-
+${shared.length ? `\nRead these shared contract files first — every unit below builds against them:\n${shared.map((s) => `- ${s}`).join('\n')}\n` : ''}
 ${units}
+
+Units are listed in build order: if a unit's owned file appears in a later unit's
+reads, complete the owner before starting the reader.
 
 The owned files already exist with exact signatures and empty bodies. Fill the
 bodies. Do not change any signature. Do not create or edit any file outside the
 owned paths above — barrels, route registries, and package manifests are written
 during integration, and other units' files are being filled concurrently.
+
+Extend each owned file's import line as you write: implementations routinely need
+types the signature never names — that is what your reads list is for — and a
+missing import is an expected, avoidable repair cycle, cheapest fixed at write
+time.
 
 Before returning, run the type check: \`${TYPECHECK}\` (from ${ROOT}). Fix every
 error it reports in YOUR owned files. Other units' files may still be stubs; their

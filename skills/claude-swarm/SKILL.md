@@ -201,12 +201,23 @@ Workflow({ name: 'claude-swarm:build', args: {
     builds: 'site header with nav',
   }],
   concurrency: 8,                  // max leaf agents in flight
-  batch: 1,                        // units per agent when read-sets are identical
+  batch: 1,                        // units per agent when one read-set contains another's
 }})
 ```
 
+**Precondition — the validator structurally cannot check this.** Every `foundation`
+path, and every owned signature stub, must exist on disk *before* invoking: workflow
+scripts have no filesystem access, so a file the master forgot to write passes
+validation and the failure surfaces only after N leaves have spawned to read a
+nonexistent stub. The master has filesystem access — verify each `foundation` path
+and each unit's `owns` stub exists (one `ls`/`test -f` sweep) as the last step
+before calling `Workflow`.
+
 `concurrency` and `batch` are one tradeoff seen from two sides: raise `batch` /
-lower `concurrency` to trade wall time for cost. The workflow validates the manifest
+lower `concurrency` to trade wall time for cost. Batching merges units whose
+read-sets nest (one contains the other — cache benefit comes from a shared prefix,
+not set equality), and each batch reads the shared portion first, owners before the
+units that read them. The workflow validates the manifest
 with plain code before anything spawns — no duplicate ownership, no unit owning
 foundation or shared files (barrels, package manifests, lockfiles, tsconfig:
 integration writes those), acyclic read/own graph, every path inside the project,
@@ -215,8 +226,10 @@ loudly with the specific violations, spending nothing.
 
 Mechanics worth knowing:
 
-- Leaves run as `claude-swarm:leaf` (sonnet, `maxTurns: 25` — the cap exists because
-  a wave's clock is its slowest branch). Measured: a turn-capped subagent returns
+- Leaves run as `claude-swarm:leaf` (sonnet·low — measured against medium across
+  four typed units: identical first-attempt type-check rate, equal turns, cheaper
+  and faster — with `maxTurns: 25`, because a wave's clock is its slowest branch).
+  Measured: a turn-capped subagent returns
   *silently* — "(Subagent completed but returned no output.)", no cap marker — so a
   leaf without a structured return is recorded `unknown`, never `failed`, and
   integration re-derives every unit's truth from the tree: files present, filled,
@@ -320,5 +333,10 @@ One consumption note that *is* worth knowing: since Claude Code v2.1.198 subagen
 per-subagent thinking setting, so the only toggle is the session-level one. The same
 roster on the same task consumes more than older intuitions suggest when thinking is
 on in your session. Per-agent `effort` pins (tracer and verifier run `xhigh`,
-mechanic runs `low`) still apply; turning thinking down in the main session turns it
-down for every agent below it.
+mechanic and leaf run `low`) still apply; turning thinking down in the main session
+turns it down for every agent below it.
+
+Effort pins also degrade silently: if a pinned level isn't supported by the model an
+agent resolves to, Claude Code falls back to the highest supported level at or below
+the pin — so a pin invalidated by a future model change will never announce itself.
+Re-check the pins against the model-config effort table when a model alias moves.

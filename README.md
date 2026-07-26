@@ -36,7 +36,7 @@ job well, with tool access cut to match:
 | `claude-swarm:mechanic` | sonnet · low | A decided change applied across N sites |
 | `claude-swarm:verifier` | sonnet · xhigh | Adversarial: refute the claim, run the thing |
 | `claude-swarm:scribe` | haiku | Docs, README, changelog, comments |
-| `claude-swarm:leaf` | sonnet · medium | Fills signature stubs inside the build workflow; turn-capped |
+| `claude-swarm:leaf` | sonnet · low | Fills signature stubs inside the build workflow; turn-capped |
 
 The pins are enforcement, not just pricing: `scout`, `tracer`, and `verifier` have no
 write tools, `mechanic` is forbidden from redesigning what it applies, and `verifier`

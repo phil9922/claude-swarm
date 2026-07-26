@@ -290,15 +290,22 @@ check('hook never warns about correct default state', () => {
 })
 
 check('injected payload stays within budget', () => {
-  // The guard that matters most. This exists because a previous cut of the hook shipped
-  // notices about correct default state, taking the real-world payload to 2988 bytes —
-  // a permanent per-session tax that no other test would have caught. Ceilings are set
-  // just above the current sizes: tripping this means re-justifying the cost, not
-  // bumping the number reflexively.
+  // The guard that matters most: an earlier cut shipped always-on notices about
+  // correct default state (+~900B/session), which no other test would have caught.
+  //
+  // Budget decided deliberately (2026-07-25), not inherited: current content
+  // (~2600B) plus one structural change of headroom. The previous 2600B ceiling
+  // was set "just above current size" and then re-tightened twice in one
+  // redesign — at that point the constant was doing the arguing instead of the
+  // content. The policy now carries only decision rules (the three questions,
+  // the roster, the rules block, a skill pointer); threshold tables and
+  // arithmetic live in the skill. Growth past 3000B therefore means reference
+  // material is accreting in the policy again — move it to SKILL.md rather than
+  // raising this — and a notice regression still trips it long before that.
   const quiet = hookContext({ seed: seedExplore }).length
   const dayOne = hookContext().length // empty config dir — what a new user actually gets
-  assert(quiet <= 2600, `quiet-path payload ${quiet}B exceeds its 2600B budget`)
-  assert(dayOne <= 2900, `day-one payload ${dayOne}B exceeds its 2900B budget`)
+  assert(quiet <= 3000, `quiet-path payload ${quiet}B exceeds its 3000B budget`)
+  assert(dayOne <= 3300, `day-one payload ${dayOne}B exceeds its 3300B budget`)
   assert(dayOne > quiet, 'the day-one case must actually include the Explore notice')
 })
 
@@ -554,6 +561,47 @@ checkAsync('build batches units with an identical read-set into one leaf', async
   assert(leafCalls === 1, `batch=2 with one shared read-set must mean 1 leaf agent, got ${leafCalls}`)
 })
 
+checkAsync('build merges nested read-sets into one batch, owner listed first', async () => {
+  // b's read-set strictly contains a's, and b reads the file a owns — the batch
+  // must merge (prefix sharing, not set equality) and list a before b.
+  let leafCalls = 0
+  let leafPromptText = ''
+  const m = {
+    typecheck: 'tsc',
+    foundation: ['src/types.ts'],
+    units: [
+      { id: 'a', owns: ['src/a.ts'], reads: ['src/types.ts'], builds: 'a' },
+      { id: 'b', owns: ['src/b.ts'], reads: ['src/types.ts', 'src/a.ts'], builds: 'b' },
+    ],
+    batch: 2,
+  }
+  await runWorkflow('build.js', {
+    args: m,
+    onAgent: async (prompt, opts) => {
+      if (opts.phase === 'Leaves') {
+        leafCalls++
+        leafPromptText = prompt
+        return { results: ['a', 'b'].map((id) => ({ unit: id, status: 'done', notes: '' })) }
+      }
+      return {
+        unitsVerified: [
+          { unit: 'a', filesPresent: true, nonEmpty: true },
+          { unit: 'b', filesPresent: true, nonEmpty: true },
+        ],
+        sharedFilesWritten: [],
+        fixed: [],
+        typecheck: 'pass',
+        judgment: [],
+      }
+    },
+  })
+  assert(leafCalls === 1, `nested read-sets must merge under batch=2, got ${leafCalls} leaf calls`)
+  assert(
+    leafPromptText.indexOf('Unit a') !== -1 && leafPromptText.indexOf('Unit a') < leafPromptText.indexOf('Unit b'),
+    'owner a must be listed before reader b in the batch prompt',
+  )
+})
+
 checkAsync('build treats a silent leaf as unknown, integrates from the tree, escalates judgment', async () => {
   const labels = []
   const out = await runWorkflow('build.js', {
@@ -614,6 +662,21 @@ checkAsync('build rejects a unit owning a foundation file', async () => {
   const m = goodManifest()
   m.units[0].owns = ['src/types.ts']
   assert(/owns a foundation file/.test(await buildViolations(m)), 'violation must name the foundation collision')
+})
+
+check('the leaf import rule exists in both the agent and the dispatch prompt', () => {
+  // The rule lives in two places on purpose — agents/leaf.md is the leaf's
+  // system prompt, build.js's leafPrompt() the per-dispatch task prompt — and
+  // duplicated prose with no test drifts. If either phrase is reworded, keep
+  // the rule in BOTH files and update the matching pattern here.
+  assert(
+    /import line is not the signature/.test(read('agents/leaf.md')),
+    'agents/leaf.md must carry the import-extension rule',
+  )
+  assert(
+    /import line as you write/.test(read('workflows/build.js')),
+    "build.js's leafPrompt must carry the import-extension rule",
+  )
 })
 
 // --- 4. Agents and skill have usable frontmatter ---------------------------
