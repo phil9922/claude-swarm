@@ -832,7 +832,43 @@ check('settings.json ships only plugin-supported keys', () => {
   }
   assert(s.subagentStatusLine && s.subagentStatusLine.type === 'command', 'subagentStatusLine must be a command')
   assert(/subagent-statusline\.js/.test(s.subagentStatusLine.command), 'must invoke scripts/subagent-statusline.js')
-  assert(/\$\{CLAUDE_PLUGIN_ROOT\}/.test(s.subagentStatusLine.command), 'must locate the script via ${CLAUDE_PLUGIN_ROOT}')
+  // NOT ${CLAUDE_PLUGIN_ROOT}: plugin settings are merged verbatim (Claude Code
+  // 2.1.220 copies each key straight across without the placeholder expansion it
+  // applies to hooks, MCP, monitors and LSP), so the placeholder would reach the
+  // shell as an undefined variable and the command would resolve to "/scripts/…".
+  // The SessionStart hook leaves the real root in a temp-dir breadcrumb instead.
+  assert(
+    !/\$\{CLAUDE_PLUGIN_ROOT\}/.test(s.subagentStatusLine.command),
+    'must not use ${CLAUDE_PLUGIN_ROOT}: it is never substituted in plugin settings',
+  )
+  assert(/claude-swarm-root/.test(s.subagentStatusLine.command), 'must locate the script via the hook-written breadcrumb')
+})
+
+check('the SessionStart hook leaves a plugin-root breadcrumb the settings command can use', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-root-'))
+  const res = spawnSync(process.execPath, [HOOK], {
+    input: JSON.stringify({ hook_event_name: 'SessionStart', session_id: 'crumb', cwd: root }),
+    encoding: 'utf8',
+    env: { ...process.env, TMPDIR: tmp },
+  })
+  assert(res.status === 0, `hook must exit 0, got ${res.status}`)
+  const crumb = path.join(tmp, 'claude-swarm-root')
+  assert(fs.existsSync(crumb), 'the hook must write the breadcrumb')
+  const pluginRoot = fs.readFileSync(crumb, 'utf8').trim()
+  assert(pluginRoot === root, `breadcrumb must be the plugin root, got "${pluginRoot}"`)
+
+  // The whole point: the shipped command, resolved against the breadcrumb, must
+  // run the real renderer. Executed here rather than string-matched.
+  const command = readJSON('settings.json').subagentStatusLine.command
+  const payload = JSON.stringify({
+    session_id: 'crumb', columns: 100,
+    tasks: [{ id: 'k', type: 'local_agent', label: 'via breadcrumb', status: 'running',
+      startTime: Date.now() - 61000, model: 'claude-sonnet-5', contextWindowSize: 200000, tokenCount: 40000 }],
+  })
+  const ran = spawnSync('sh', ['-c', command], { input: payload, encoding: 'utf8', env: { ...process.env, TMPDIR: tmp } })
+  assert(ran.status === 0, `the shipped command must run, exit ${ran.status}: ${ran.stderr}`)
+  const row = JSON.parse(ran.stdout.trim())
+  assert(row.id === 'k' && /SONNET/.test(row.content), `must render a real row, got ${ran.stdout}`)
 })
 
 check('status line scripts are syntactically valid', () => {

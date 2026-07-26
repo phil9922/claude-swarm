@@ -1,6 +1,6 @@
 {
   "subagentStatusLine": {
     "type": "command",
-    "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/subagent-statusline.js\""
+    "command": "node \"$(cat \"${TMPDIR:-/tmp}/claude-swarm-root\")/scripts/subagent-statusline.js\""
   }
 }

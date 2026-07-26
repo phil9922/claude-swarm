@@ -1,6 +1,6 @@
 {
   "name": "claude-swarm",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "Context-shielding, cost-tiered delegation for Claude Code: high-volume work runs in specialized subagents on the cheapest tier a grader can check, returning summaries that keep the main context small. Ships a tiered agent roster, an orchestration skill, three workflows (survey, audit, and a manifest-driven build), and a zero-token completion feed; wide fan-out is a gated special case.",
   "author": {
     "name": "phil9922",

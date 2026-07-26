@@ -7,6 +7,33 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html): the git tag
 
 ## [Unreleased]
 
+## [0.2.4] — 2026-07-26
+
+### Fixed
+- **The plugin-shipped subagent panel works again, by not needing
+  `${CLAUDE_PLUGIN_ROOT}`.** 0.2.3 documented the default as broken and told users to
+  register the renderer themselves. Reading Claude Code 2.1.220 settled why: plugin
+  settings *are* honored, but they are merged **verbatim** — the merge copies each key
+  straight across and never applies the placeholder expansion it applies to hooks, MCP
+  servers, monitors and LSP configs. So `${CLAUDE_PLUGIN_ROOT}` reached the shell as an
+  undefined variable, the command resolved to `node "/scripts/subagent-statusline.js"`,
+  node exited non-zero, and Claude Code fell back to default rows — exactly the silent
+  failure measured earlier. **A plugin can never point that setting at a script inside
+  itself**, which makes the documented feature unusable as documented.
+
+  The SessionStart hook does not have that problem: it runs from inside the plugin and
+  knows its own location from `__dirname`. It now writes that path to
+  `$TMPDIR/claude-swarm-root` on every session start, and the shipped command reads the
+  breadcrumb. This follows the plugin across updates, works identically for a
+  marketplace install and a `--plugin-dir` working tree, and needs nothing from the
+  user. A smoke check executes the shipped command against the breadcrumb and asserts a
+  real rendered row, so the two cannot drift apart.
+
+  Documented limits, both benign: `disableAllHooks` leaves no breadcrumb and the rows
+  fall back to defaults; and with two sessions on different copies of the plugin, the
+  last to start owns the breadcrumb. The hook's "writes nothing" contract is amended
+  rather than quietly broken — it still touches nothing in a user's config dir.
+
 ## [0.2.3] — 2026-07-26
 
 **First live run of the swarm display, and both of 0.2.2's open risks resolved — one
@@ -478,7 +505,8 @@ Initial release.
 - **Smoke test and GitHub Actions CI** — static validation of the manifests,
   runtime checks of the hook contract, and compile checks of the workflow scripts.
 
-[Unreleased]: https://github.com/phil9922/claude-swarm/compare/v0.2.3...HEAD
+[Unreleased]: https://github.com/phil9922/claude-swarm/compare/v0.2.4...HEAD
+[0.2.4]: https://github.com/phil9922/claude-swarm/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/phil9922/claude-swarm/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/phil9922/claude-swarm/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/phil9922/claude-swarm/compare/v0.2.0...v0.2.1

@@ -253,25 +253,37 @@ older versions the rows degrade to badge + label + elapsed. The same gates as th
 of the plugin apply: the workspace trust dialog must be accepted, and `disableAllHooks`
 disables status lines too.
 
-**Enabling it is currently a manual step.** The plugin ships a `subagentStatusLine`
-default in its `settings.json`, but on Claude Code 2.1.220 that default does not take
-effect — verified by capture: under the plugin default alone the renderer never runs,
-while the identical script registered by absolute path in user or project settings
-runs on the next tick. Until that resolves, register it yourself:
+**Nothing to configure — but not the way the docs suggest.** A plugin may ship a
+`subagentStatusLine` in its `settings.json`, and Claude Code 2.1.220 does honor it.
+What it does *not* do is expand `${CLAUDE_PLUGIN_ROOT}` there: plugin settings are
+merged verbatim, without the placeholder substitution applied to hooks, MCP servers,
+monitors and LSP configs. The placeholder reaches the shell as an undefined variable,
+so a plugin that writes the documented thing points at `/scripts/...` and silently
+renders nothing. This plugin shipped exactly that bug in 0.2.2.
+
+The fix is to stop needing the placeholder. The SessionStart hook runs from inside the
+plugin, so it knows its own location from `__dirname`; it writes that path to
+`$TMPDIR/claude-swarm-root` on every session start, and the shipped command reads it:
 
 ```json
 {
   "subagentStatusLine": {
     "type": "command",
-    "command": "node ~/.claude/subagent-statusline.js"
+    "command": "node \"$(cat \"${TMPDIR:-/tmp}/claude-swarm-root\")/scripts/subagent-statusline.js\""
   }
 }
 ```
 
-Copy `scripts/subagent-statusline.js` next to it the same way as the aggregate
-segment below — `${CLAUDE_PLUGIN_ROOT}` is not available in your own settings, and the
-plugin's install path changes on every update. If the rows show no `m:ss` clock and no
-context bar, the renderer isn't running and you're seeing Claude Code's defaults.
+That follows the plugin across updates and works the same whether it was installed
+from a marketplace or loaded with `--plugin-dir`. Two consequences worth knowing:
+`disableAllHooks` leaves no breadcrumb, so the rows fall back to Claude Code's
+defaults; and with two sessions on *different* copies of the plugin, the last session
+to start owns the breadcrumb, so both panels render that copy's renderer.
+
+If the rows show no `m:ss` clock and no context bar, the renderer isn't running and
+you're seeing Claude Code's defaults. To pin it explicitly instead, copy
+`scripts/subagent-statusline.js` somewhere stable and point the same setting at your
+own absolute path — user settings win over the plugin's default.
 
 ### Post-install: aggregate count on the main status line
 

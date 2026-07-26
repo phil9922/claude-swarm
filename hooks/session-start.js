@@ -33,9 +33,20 @@
  * adding a notice here. test/smoke.js pins the injected byte budget so this
  * cannot regress silently.
  *
- * Nothing in this file writes, creates, or deletes anything. Every probe is
- * read-only and reporting is the whole contract: silently changing a user's
- * config dir is not a SessionStart hook's call to make.
+ * Nothing in this file touches a user's config dir. Every probe is read-only and
+ * reporting is the whole contract: silently changing a user's configuration is
+ * not a SessionStart hook's call to make.
+ *
+ * The one write is a path breadcrumb in the OS temp dir, and it exists because
+ * of a measured Claude Code behavior (2.1.220). A plugin may ship a
+ * `subagentStatusLine` in its settings.json, and that setting IS honored — but
+ * plugin settings are merged verbatim, without the `${CLAUDE_PLUGIN_ROOT}`
+ * expansion applied to hooks, MCP servers, monitors and LSP configs. The
+ * placeholder therefore reaches the shell as an undefined variable, and a plugin
+ * can never point that setting at a script inside itself. This hook runs from
+ * inside the plugin, so it knows the answer from __dirname and leaves it where
+ * the settings command can read it. Best-effort: if the write fails, the panel
+ * falls back to Claude Code's default rows and nothing else notices.
  */
 
 'use strict'
@@ -188,6 +199,16 @@ review), \`claude-swarm:build\` (waves from a manifest).
   propose it only for a task Opus actually failed, never route to it yourself.
 
 Load the \`claude-swarm\` skill for the full playbook.`
+
+// The breadcrumb: this file lives in <plugin root>/hooks/, so the root is one
+// level up, resolved however the plugin was loaded — installed cache today,
+// --plugin-dir working tree tomorrow. Rewritten every session start, so it
+// follows the plugin across updates without anyone re-running anything.
+try {
+  fs.writeFileSync(path.join(os.tmpdir(), 'claude-swarm-root'), path.resolve(__dirname, '..'))
+} catch (_) {
+  /* the display degrades to default rows; a session must never fail over a hint */
+}
 
 const context =
   notices.length > 0
