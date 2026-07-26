@@ -108,9 +108,9 @@ from a finalized plan:
 
 1. **You (or the main loop) write the foundation**: schema, tokens, routing skeleton,
    shared utils, data layer — and, crucially, **signature files**: real files with
-   exact names, props, and return types, and empty bodies. Leaves fill blanks instead
-   of interpreting prose, which is what keeps twelve parallel workers from drifting
-   apart.
+   exact names, props, and return types, and compiling placeholder bodies. Leaves
+   fill blanks instead of interpreting prose, which is what keeps twelve parallel
+   workers from drifting apart.
 2. **The workflow validates a work manifest** — per unit: the paths it exclusively
    owns, the foundation paths it reads, what it builds — with plain code before
    anything spawns: no two units may own the same path, the dependency graph must be

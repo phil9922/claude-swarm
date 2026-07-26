@@ -185,9 +185,11 @@ and already holds the finalized plan; a serial foundation agent would re-pay the
 into a fresh context (one cold start) to produce dense output from compact input —
 which fails Shield's test — with no tier win either, since foundation work is Opus
 regardless. So the master writes the schema, tokens, routing skeleton, shared utils,
-data layer, **signature files** (real files, exact names and types, empty bodies —
-leaves fill blanks instead of interpreting prose), and the manifest. The manifest is
-the public interface between master and workflow:
+data layer, **signature files** (real files, exact names and types, and *compiling*
+placeholder bodies — `throw new Error('not implemented')`, never an empty body: a
+stub that doesn't type-check starts its leaf from red, and leaves fill blanks
+instead of interpreting prose), and the manifest. The manifest is the public
+interface between master and workflow:
 
 ```js
 Workflow({ name: 'claude-swarm:build', args: {
@@ -234,7 +236,9 @@ Mechanics worth knowing:
   leaf without a structured return is recorded `unknown`, never `failed`, and
   integration re-derives every unit's truth from the tree: files present, filled,
   type-checked. Leaf gating uses the partial-order promise wiring above, on each
-  unit's own `reads` set.
+  unit's own `reads` set. Each leaf's type check is **sibling-filtered** — the
+  project command piped through a filter to its own files — so concurrent stubs'
+  errors can't burn its turns or inflate its repair count.
 - Integration is split by grader: `mechanic` (sonnet·low) does everything the
   compiler grades — barrels, imports, seams — and only surfaced judgment calls
   escalate to `implementer` on opus. Shrinking that Opus tail is what raises the

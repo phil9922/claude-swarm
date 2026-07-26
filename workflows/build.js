@@ -74,6 +74,37 @@ function insideProject(p) {
   return true
 }
 
+// Key vocabulary, for misspelling detection: a manifest key the validator does
+// not recognize is silently inert, and an inert `foundations:` (for
+// `foundation:`) would otherwise surface as N misleading "neither in foundation
+// nor owned" violations instead of one accurate warning naming the typo.
+const TOP_KEYS = ['typecheck', 'root', 'foundation', 'units', 'concurrency', 'batch']
+// `status` is accepted silently so a round-tripped manifest (units come back
+// with a status field) can be re-submitted without noise.
+const UNIT_KEYS = ['id', 'owns', 'reads', 'builds', 'status']
+
+function editDistance(a, b) {
+  const m = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)])
+  for (let j = 1; j <= b.length; j++) m[0][j] = j
+  for (let i = 1; i <= a.length; i++)
+    for (let j = 1; j <= b.length; j++)
+      m[i][j] = Math.min(m[i - 1][j] + 1, m[i][j - 1] + 1, m[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1))
+  return m[a.length][b.length]
+}
+
+function unknownKeyWarning(key, valid, where) {
+  let best = null
+  let d = Infinity
+  for (const v of valid) {
+    const e = editDistance(key.toLowerCase(), v)
+    if (e < d) {
+      d = e
+      best = v
+    }
+  }
+  return `${where}: unknown key "${key}"${d <= 3 ? ` — did you mean "${best}"?` : ''} (valid keys: ${valid.join(', ')})`
+}
+
 // Shared files a leaf must never own — written during integration instead.
 const RESERVED = [
   { re: /^index\.(js|jsx|ts|tsx|mjs|cjs)$/i, why: 'barrel' },
@@ -84,7 +115,19 @@ const RESERVED = [
 
 function validateManifest() {
   const v = []
+  const warnings = []
   const owner = new Map() // normalized path -> owning unit id
+
+  for (const k of Object.keys(input)) {
+    if (!TOP_KEYS.includes(k)) warnings.push(unknownKeyWarning(k, TOP_KEYS, 'manifest'))
+  }
+  for (const u of UNITS) {
+    if (!u || typeof u !== 'object' || Array.isArray(u)) continue
+    const where = typeof u.id === 'string' && u.id.trim() ? `unit "${u.id}"` : 'unit (no id)'
+    for (const k of Object.keys(u)) {
+      if (!UNIT_KEYS.includes(k)) warnings.push(unknownKeyWarning(k, UNIT_KEYS, where))
+    }
+  }
 
   if (typeof TYPECHECK !== 'string' || !TYPECHECK.trim()) v.push('typecheck: a non-empty command string is required')
   if (ROOT !== '.' && !insideProject(ROOT)) v.push(`root escapes the project: ${ROOT}`)
@@ -158,14 +201,15 @@ function validateManifest() {
   }
   for (const id of depsOf.keys()) visit(id)
 
-  return { violations: v, owner }
+  return { violations: v, warnings, owner }
 }
 
-const { violations, owner } = validateManifest()
+const { violations, warnings, owner } = validateManifest()
+for (const w of warnings) log(`  ⚠ ${w}`)
 if (violations.length) {
   log(`manifest invalid — ${violations.length} violation(s); nothing was spawned:`)
   for (const x of violations) log(`  ✗ ${x}`)
-  return { status: 'invalid-manifest', violations }
+  return { status: 'invalid-manifest', violations, warnings }
 }
 
 // ---- Leaf wave --------------------------------------------------------------
@@ -248,6 +292,17 @@ async function withSlot(fn) {
   }
 }
 
+// The project type check, sibling-filtered to one batch's owned files. Ten
+// concurrent leaves against one project-wide tsc would each see errors from
+// siblings' unfilled stubs; telling a leaf those aren't its problem is prompt
+// discipline, pre-filtering the output is actual scoping — and chased sibling
+// errors would inflate the repair-cycle metric with contamination that can't
+// be separated from signature quality afterward.
+function scopedCheck(batch) {
+  const files = [...new Set(batch.flatMap((u) => u.owns.map(norm)))]
+  return `${TYPECHECK} 2>&1 | grep -F ${files.map((f) => `-e "${f}"`).join(' ')}`
+}
+
 function leafPrompt(batch) {
   const shared =
     batch.length > 1 ? readsOf(batch[0]).filter((r) => batch.every((u) => readsOf(u).includes(r))) : []
@@ -264,19 +319,25 @@ ${units}
 Units are listed in build order: if a unit's owned file appears in a later unit's
 reads, complete the owner before starting the reader.
 
-The owned files already exist with exact signatures and empty bodies. Fill the
-bodies. Do not change any signature. Do not create or edit any file outside the
-owned paths above — barrels, route registries, and package manifests are written
-during integration, and other units' files are being filled concurrently.
+The owned files already exist with exact signatures and compiling placeholder
+bodies. Fill the bodies. Do not change any signature. Do not create or edit any
+file outside the owned paths above — barrels, route registries, and package
+manifests are written during integration, and other units' files are being filled
+concurrently.
 
 Extend each owned file's import line as you write: implementations routinely need
 types the signature never names — that is what your reads list is for — and a
 missing import is an expected, avoidable repair cycle, cheapest fixed at write
 time.
 
-Before returning, run the type check: \`${TYPECHECK}\` (from ${ROOT}). Fix every
-error it reports in YOUR owned files. Other units' files may still be stubs; their
-errors are not yours and do not make your unit "failed".
+Before returning, run this sibling-filtered type check (from ${ROOT}):
+
+  ${scopedCheck(batch)}
+
+Empty output means your files are type-clean — that is the bar for "done". The
+filter exists because other units are being filled concurrently and their stubs'
+errors are pre-filtered out: they are not yours, and you must not fix or chase
+them.
 
 Return one result per unit above, by id. Be honest: "done" only if complete and
 type-clean in your files.`
@@ -425,6 +486,7 @@ const verifiedOk =
 
 return {
   status: !integ ? 'unverified' : verifiedOk && !(integ.judgment.length && !judgmentReport) ? 'complete' : 'partial',
+  ...(warnings.length ? { warnings } : {}),
   units: leafStatus,
   integration: integ || 'integration agent failed to run — tree state is unverified, run the type check yourself',
   judgment: judgmentReport,

@@ -600,6 +600,61 @@ checkAsync('build merges nested read-sets into one batch, owner listed first', a
     leafPromptText.indexOf('Unit a') !== -1 && leafPromptText.indexOf('Unit a') < leafPromptText.indexOf('Unit b'),
     'owner a must be listed before reader b in the batch prompt',
   )
+  // The sibling filter: the leaf's type check must be scoped to its owned files,
+  // or concurrent stubs' errors contaminate the repair-cycle metric.
+  assert(/grep -F/.test(leafPromptText), 'leaf type check must be sibling-filtered')
+  assert(/-e "src\/a\.ts"/.test(leafPromptText) && /-e "src\/b\.ts"/.test(leafPromptText),
+    'the filter must name the batch-owned files')
+})
+
+checkAsync('build warns on a misspelled top-level key with the nearest valid one', async () => {
+  // `foundations:` used to be silently ignored, cascading into N misleading
+  // "neither in foundation nor owned" violations. The warning names the typo.
+  const m = {
+    typecheck: 'tsc',
+    foundations: ['src/types.ts'],
+    units: [{ id: 'a', owns: ['src/a.ts'], reads: ['src/types.ts'], builds: 'a' }],
+  }
+  let spawned = 0
+  const out = await runWorkflow('build.js', {
+    args: m,
+    onAgent: async () => {
+      spawned++
+      return null
+    },
+  })
+  assert(out.status === 'invalid-manifest', 'the cascade still fails the manifest')
+  assert(spawned === 0, 'nothing may spawn')
+  assert(
+    out.warnings && /did you mean "foundation"/.test(out.warnings.join('\n')),
+    'the warning must name the misspelled key and its nearest valid neighbour',
+  )
+})
+
+checkAsync('build surfaces a unit-level unknown key without failing a valid run', async () => {
+  const m = {
+    typecheck: 'tsc',
+    foundation: ['src/types.ts'],
+    units: [{ id: 'a', owns: ['src/a.ts'], read: ['src/types.ts'], builds: 'a' }],
+  }
+  const out = await runWorkflow('build.js', {
+    args: m,
+    onAgent: async (prompt, opts) => {
+      if (opts.phase === 'Leaves') return { results: [{ unit: 'a', status: 'done', notes: '' }] }
+      return {
+        unitsVerified: [{ unit: 'a', filesPresent: true, nonEmpty: true }],
+        sharedFilesWritten: [],
+        fixed: [],
+        typecheck: 'pass',
+        judgment: [],
+      }
+    },
+  })
+  assert(out.status === 'complete', `an unknown unit key alone must not fail the run, got ${out.status}`)
+  assert(
+    out.warnings && /unit "a": unknown key "read" — did you mean "reads"/.test(out.warnings.join('\n')),
+    'the unit-level warning must name the unit, the key, and the nearest valid one',
+  )
 })
 
 checkAsync('build treats a silent leaf as unknown, integrates from the tree, escalates judgment', async () => {

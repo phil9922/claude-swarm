@@ -195,39 +195,41 @@ Prediction scoring (README, "Recorded prediction: the first build run"):
 
 ## Known first-contact risks
 
+*(Two risks originally listed here — a misspelled manifest key silently misdirecting,
+and full-project tsc noise between concurrent leaves — were fixed before this run
+because they would have contaminated the metrics rather than informed them: the
+validator now warns on unknown keys with a nearest-key suggestion, and each leaf's
+type check is sibling-filtered to its owned files. What remains is what the run is
+supposed to discover.)*
+
 1. **The master's first real manifest, and how legibly validation fails.** Every
    manifest the validator has seen was written to be correct. When the first real one
    isn't: violations are *collected* (not fail-fast), logged one per line, and each
    names the unit id, the path, and the rule — `path owned by more than one unit:
    src/x.ts (a and b)`, `b: reads src/ghost.ts, which is neither in foundation nor
    owned by any unit`, `dependency cycle: a → b → a`, `u: owns a shared file reserved
-   for integration (barrel): src/index.ts`. For these classes a bad decomposition is
-   a two-minute correction without opening the validator. **The known legibility gap:
-   a misspelled top-level key.** `foundations:` instead of `foundation:` is silently
-   ignored, so every read of a foundation file produces a misleading "neither in
-   foundation nor owned" violation instead of one "unknown key" error. Five-minute
-   fix (warn on unknown top-level keys) — worth doing at first contact if it bites.
+   for integration (barrel): src/index.ts` — and unrecognized keys get a warning
+   naming the key and the nearest valid one. The open question the run answers:
+   whether that's enough to fix a genuinely bad *decomposition* (not just a typo) in
+   two minutes without opening the validator source. Record the violations verbatim
+   if it happens.
 2. **Stubs that don't exist.** The validator structurally can't stat the filesystem,
    so a foundation path or signature stub the master forgot to write passes
    validation and fails mid-wave as confused leaf notes. The build-arm prompt orders
    an explicit on-disk verification step; *organic* use depends on the master loading
-   the skill and obeying the precondition. Design-level residual risk; watch for it.
+   the skill and obeying the precondition. Deliberately left in: whether the master
+   honours a documented precondition unprompted is a finding worth having.
 3. **Bash permissions in headless mode.** In `claude -p` nobody is prompted — tool
    calls follow configured rules — so if `Bash` isn't allowlisted, every leaf's
    type check silently fails and repair never runs. The commands above allowlist it;
    forgetting this would produce a plausible-looking but unrepaired wave.
-4. **Full-project tsc noise between concurrent leaves.** Leaves run a project-wide
-   type check while siblings' stubs are still unfilled; prompts tell them to fix only
-   their own files' errors, but a leaf that "helpfully" chases a sibling's error is
-   possible. Five-minute fix if seen: scope the typecheck command per-unit in the
-   manifest.
-5. **`maxTurns: 25` calibrated on single-file pure TS.** F1's units were one file
+4. **`maxTurns: 25` calibrated on single-file pure TS.** F1's units were one file
    with no JSX and no store wiring; a React component reading tokens + store may need
    more reads. 25 leaves slack (write 5–6 + repair 6), but three repair cycles
-   approaches the silent cap — the `unknown` count is the tripwire. Tuning problem,
-   not design problem.
-6. **React/JSX stub shape.** Signature stubs for components must compile while
-   empty (`throw` bodies) under the Vite template's tsconfig (`jsx`, `strict`). If
-   the master writes stubs that don't compile on their own, leaves start from red.
-   The foundation instruction says stubs must type-check before the wave; if it
-   bites, it's a five-minute prompt fix in the build-arm instruction.
+   approaches the silent cap — the `unknown` count is the tripwire. Deliberately not
+   retuned beforehand: this run *is* the calibration data.
+5. **Stub compliance.** The instructions now require compiling placeholder bodies
+   (`throw`, never empty) that type-check before the wave — but instruction is not
+   compliance, same class as risk 2. If the master ships red stubs anyway, the
+   leaves' sibling filter will still surface those errors (they sit in owned files):
+   attribute them to Wave 1 in the record, not to the leaf or to signature quality.
