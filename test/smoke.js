@@ -817,6 +817,138 @@ check('skills/claude-swarm/SKILL.md has valid frontmatter', () => {
   assert(/description:\s*\S/.test(front), 'description required')
 })
 
+// --- 5. Status line scripts: settings ship them, they render and degrade ----
+
+const SUB_SL = path.join(root, 'scripts/subagent-statusline.js')
+const MAIN_SL = path.join(root, 'scripts/swarm-statusline.js')
+const stripAnsi = (s) => s.replace(/\x1b\[[0-9;]*m/g, '')
+
+check('settings.json ships only plugin-supported keys', () => {
+  // "Only the `agent` and `subagentStatusLine` keys are currently supported"
+  // (plugins reference) — anything else would be silently dead weight.
+  const s = readJSON('settings.json')
+  for (const k of Object.keys(s)) {
+    assert(['agent', 'subagentStatusLine'].includes(k), `unsupported plugin settings key "${k}"`)
+  }
+  assert(s.subagentStatusLine && s.subagentStatusLine.type === 'command', 'subagentStatusLine must be a command')
+  assert(/subagent-statusline\.js/.test(s.subagentStatusLine.command), 'must invoke scripts/subagent-statusline.js')
+  assert(/\$\{CLAUDE_PLUGIN_ROOT\}/.test(s.subagentStatusLine.command), 'must locate the script via ${CLAUDE_PLUGIN_ROOT}')
+})
+
+check('status line scripts are syntactically valid', () => {
+  execFileSync(process.execPath, ['--check', SUB_SL], { stdio: 'pipe' })
+  execFileSync(process.execPath, ['--check', MAIN_SL], { stdio: 'pipe' })
+})
+
+// One synthetic payload covering the tier matrix; TMPDIR is pointed at a fresh
+// dir so the aggregate cache the script writes is isolated and inspectable.
+function runStatusline(script, stdin, tmpdir) {
+  return spawnSync(process.execPath, [script], {
+    input: stdin,
+    encoding: 'utf8',
+    env: { ...process.env, TMPDIR: tmpdir },
+  })
+}
+
+const SL_TASKS = {
+  session_id: 'smoke-sess',
+  columns: 100,
+  tasks: [
+    { id: 't-leaf', type: 'claude-swarm:leaf', label: 'PriceBreakdown', status: 'running',
+      startTime: Date.now() - 84000, model: 'claude-sonnet-5', contextWindowSize: 200000, tokenCount: 84000 },
+    { id: 't-anom', type: 'claude-swarm:leaf', label: 'SplitEditor', status: 'running',
+      startTime: Date.now() - 51000, model: 'claude-opus-5', contextWindowSize: 200000, tokenCount: 36000 },
+    { id: 't-scout', type: 'claude-swarm:scout', description: 'find call sites', status: 'running',
+      startTime: Date.now() - 5000, model: 'claude-haiku-4-5-20251001', contextWindowSize: 200000, tokenCount: 9000 },
+    { id: 't-impl', type: 'claude-swarm:implementer', label: 'integration', status: 'running',
+      startTime: Date.now() - 123000, model: 'claude-opus-5', contextWindowSize: 200000, tokenCount: 142000 },
+    { id: 't-nomodel', type: 'claude-swarm:tracer', label: 'wiring', status: 'running',
+      startTime: Date.now() - 2000 },
+    { id: 't-other', name: 'Explore', status: 'running', startTime: Date.now(), model: 'claude-haiku-4-5-20251001' },
+  ],
+}
+
+check('subagent statusline renders tier badges, red only for the off-Sonnet leaf', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-sl-'))
+  const res = runStatusline(SUB_SL, JSON.stringify(SL_TASKS), tmp)
+  assert(res.status === 0, `must exit 0, got ${res.status}`)
+  assert(!/undefined/.test(res.stdout), 'no "undefined" may leak into a row')
+  const rows = {}
+  for (const line of res.stdout.trim().split('\n')) {
+    const o = JSON.parse(line) // every stdout line must be a {"id","content"} object
+    rows[o.id] = o.content
+  }
+  assert(!('t-other' in rows), 'non-swarm tasks must keep the default rendering (id omitted)')
+  assert(/\x1b\[102;30m/.test(rows['t-leaf']) && /LEAF/.test(rows['t-leaf']), 'Sonnet leaf gets the green badge')
+  assert(/1:24/.test(rows['t-leaf']), 'elapsed renders m:ss from startTime')
+  assert(/42%/.test(rows['t-leaf']), 'context bar percentage from tokenCount/contextWindowSize')
+  assert(/\x1b\[101;97m/.test(rows['t-anom']), 'a leaf resolved off Sonnet gets the red anomaly badge')
+  assert(!/\x1b\[103;30m/.test(rows['t-anom']), 'the anomaly badge replaces the Opus badge, not joins it')
+  assert(/\x1b\[106;30m/.test(rows['t-scout']) && /SCOUT/.test(rows['t-scout']), 'Haiku agent gets the cyan badge')
+  assert(/\x1b\[103;30m/.test(rows['t-impl']), 'Opus agent gets the yellow badge')
+  const noModel = rows['t-nomodel']
+  assert(noModel && /TRACE/.test(noModel), 'model-absent task still renders a row')
+  for (const bg of ['\x1b[106;30m', '\x1b[102;30m', '\x1b[103;30m', '\x1b[101;97m']) {
+    assert(!noModel.includes(bg), 'model absent → no tier badge that would be a guess')
+  }
+})
+
+check('subagent statusline honors the drop order under narrow columns', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-sl-'))
+  for (const columns of [30, 14]) {
+    const res = runStatusline(SUB_SL, JSON.stringify({ ...SL_TASKS, columns }), tmp)
+    assert(res.status === 0, `must exit 0 at columns=${columns}`)
+    for (const line of res.stdout.trim().split('\n')) {
+      const o = JSON.parse(line)
+      const visible = stripAnsi(o.content)
+      assert(!visible.includes('█'), `columns=${columns}: the context bar drops first`)
+      assert(visible.length <= columns, `columns=${columns}: row "${visible}" is ${visible.length} wide`)
+      assert(/[A-Z]/.test(visible), 'the badge never drops')
+    }
+  }
+})
+
+check('subagent statusline swallows garbage input and exits 0', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-sl-'))
+  const res = runStatusline(SUB_SL, 'not json at all', tmp)
+  assert(res.status === 0, 'must exit 0 on garbage stdin')
+  assert(res.stdout === '', 'must print nothing (all rows fall back to default rendering)')
+})
+
+check('subagent statusline writes the per-session aggregate cache', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-sl-'))
+  runStatusline(SUB_SL, JSON.stringify(SL_TASKS), tmp)
+  const agg = JSON.parse(fs.readFileSync(path.join(tmp, 'claude-swarm-status-smoke-sess.json'), 'utf8'))
+  assert(agg.counts.sonnet === 1, 'one running Sonnet leaf')
+  assert(agg.counts.haiku === 1 && agg.counts.opus === 1, 'one Haiku, one Opus')
+  assert(agg.counts.anomaly === 1, 'the off-Sonnet leaf counts as an anomaly, not as Opus')
+  assert(agg.counts.unresolved === 1, 'the model-absent task counts as unresolved')
+})
+
+check('main statusline segment reads the cache, goes quiet when stale or absent', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-sl-'))
+  const stdin = JSON.stringify({ session_id: 'smoke-sess' })
+  const missing = runStatusline(MAIN_SL, stdin, tmp)
+  assert(missing.status === 0 && missing.stdout === '', 'no cache → empty output, exit 0')
+
+  runStatusline(SUB_SL, JSON.stringify(SL_TASKS), tmp) // fresh cache
+  const live = runStatusline(MAIN_SL, stdin, tmp)
+  assert(live.status === 0, 'must exit 0 with a live cache')
+  const seg = stripAnsi(live.stdout)
+  assert(/swarm/.test(seg), 'segment carries the swarm label')
+  assert(/1S/.test(seg) && /1H/.test(seg) && /1O/.test(seg) && /1!/.test(seg), `all tiers counted, got "${seg}"`)
+  assert(/\x1b\[101;97m/.test(live.stdout), 'anomaly count renders in red')
+
+  const cache = path.join(tmp, 'claude-swarm-status-smoke-sess.json')
+  const past = new Date(Date.now() - 60000)
+  fs.utimesSync(cache, past, past)
+  const stale = runStatusline(MAIN_SL, stdin, tmp)
+  assert(stale.status === 0 && stale.stdout === '', 'stale cache → empty output (the wave is over)')
+
+  const garbage = runStatusline(MAIN_SL, 'not json', tmp)
+  assert(garbage.status === 0 && garbage.stdout === '', 'garbage stdin → empty output, exit 0')
+})
+
 // --- Report ----------------------------------------------------------------
 
 Promise.all(pending).then(() => {

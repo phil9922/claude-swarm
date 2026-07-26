@@ -7,6 +7,49 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html): the git tag
 
 ## [Unreleased]
 
+## [0.2.2] — 2026-07-26
+
+**Display-only, safe before the shakedown.** Everything here reads data Claude Code
+already tracks and renders it locally: nothing in `build.js`, the agents, the policy,
+or the eval protocol changes, and status line scripts consume no API tokens. The
+pre-registered predictions and the frozen shakedown protocol are untouched.
+
+### Added
+- **Live per-agent rows in the subagent panel.** The plugin ships a default
+  [`subagentStatusLine`](https://code.claude.com/docs/en/statusline#subagent-status-lines)
+  in `settings.json` (one of the two settings keys a plugin may ship, per the plugins
+  reference). Each swarm agent renders as a fixed-width badge whose background encodes
+  the **model tier** — bright cyan Haiku, bright green Sonnet, bright yellow Opus —
+  plus label, elapsed (`m:ss`, weight not color: dim young, bold near the turn cap),
+  and an 8-cell context bar from `tokenCount`/`contextWindowSize`. Bright red is
+  reserved for one anomaly: a `leaf` resolved off Sonnet, the void condition of the
+  build prediction in `evals/README.md`. Unresolved models get a neutral badge, never
+  a guessed tier (`model`/`contextWindowSize` need Claude Code v2.1.205+). Under
+  narrow `columns` the bar drops first, then the label, then elapsed — never the
+  badge. Non-swarm rows keep the default rendering. The script never exits non-zero;
+  every failure degrades to default rendering.
+- **`scripts/swarm-statusline.js`, a post-install main-status-line segment** showing
+  running swarm agents by tier (`swarm 2H 5S 1O`, red only for anomalies). Manual
+  step because a plugin cannot ship `statusLine` ("Only the `agent` and
+  `subagentStatusLine` keys are currently supported" — plugins reference). The README
+  documents the settings block with `refreshInterval: 1`, since the event-driven
+  triggers go quiet exactly while a master waits on background subagents.
+- **One deviation from "no state file", forced by the harness:** the main status
+  line's stdin carries session data only — the `tasks` array goes exclusively to
+  `subagentStatusLine` — so the subagent renderer caches a ~100-byte per-session
+  aggregate in the OS temp dir (the statusline docs' own caching pattern, keyed by
+  sanitized `session_id`) and the segment reads it with a 10s staleness cutoff.
+- **Smoke checks (51 → 58)** run both scripts against synthetic payloads: the tier
+  matrix incl. the red anomaly badge, model-absent degradation, narrow-columns drop
+  order with ANSI-stripped width asserted, garbage stdin, aggregate cache contents,
+  and the segment's live/stale/missing cache behavior.
+
+### Known first-contact risk
+- Whether `${CLAUDE_PLUGIN_ROOT}` substitutes inside a plugin `settings.json`
+  command is not documented (the substitution table lists hooks, monitors, MCP, LSP,
+  and skill/agent content only). If it does not resolve, the failure mode is the
+  default row rendering, not a broken panel.
+
 ## [0.2.1] — 2026-07-26
 
 Everything between the 0.2.0 reframe and the first real build run: deferred decisions
@@ -319,7 +362,10 @@ Initial release.
 - **Smoke test and GitHub Actions CI** — static validation of the manifests,
   runtime checks of the hook contract, and compile checks of the workflow scripts.
 
-[Unreleased]: https://github.com/phil9922/claude-swarm/compare/v0.1.4...HEAD
+[Unreleased]: https://github.com/phil9922/claude-swarm/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/phil9922/claude-swarm/compare/v0.2.1...v0.2.2
+[0.2.1]: https://github.com/phil9922/claude-swarm/compare/v0.2.0...v0.2.1
+[0.2.0]: https://github.com/phil9922/claude-swarm/compare/v0.1.4...v0.2.0
 [0.1.4]: https://github.com/phil9922/claude-swarm/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/phil9922/claude-swarm/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/phil9922/claude-swarm/compare/v0.1.1...v0.1.2

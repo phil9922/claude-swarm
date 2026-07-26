@@ -204,6 +204,85 @@ them.
 The SessionStart hook mentions this once per session while that file is absent, and
 goes quiet as soon as it exists.
 
+### Live swarm display
+
+While a wave runs, the agent panel below the prompt shows one colored row per swarm
+agent. The plugin ships this by default — plugin `settings.json` may carry the
+[`subagentStatusLine`](https://code.claude.com/docs/en/statusline#subagent-status-lines)
+key — so there is nothing to configure:
+
+```
+  LEAF    PriceBreakdown          1:24  ███░░░░░ 42%
+  LEAF    SplitEditor             0:51  █░░░░░░░ 18%
+  IMPL    integration             2:03  ██████░░ 71%
+```
+
+**Background color encodes the model tier, not the agent name.** In a build wave
+every row is `claude-swarm:leaf`, so per-agent color would convey nothing; tier is
+the thing this plugin routes on, and the wave reads as a cost heat map:
+
+| Badge | Meaning |
+|---|---|
+| bright cyan | Haiku — cheap / cool |
+| bright green | Sonnet — the workhorse |
+| bright yellow | Opus — expensive / warm |
+| **bright red** | **anomaly**: a `leaf` resolved to anything other than Sonnet — the void condition of the build prediction in `evals/README.md`. It should look *wrong*, not merely expensive. |
+
+A task whose model isn't resolved yet gets a neutral (reverse-video) badge rather
+than a guessed tier. Elapsed time uses weight, not color — dim when young, bold when
+approaching the leaf turn cap — so it never fights the tier badge. When the panel is
+narrow the context bar drops first, then the label, then elapsed; the badge never
+drops. Rows for agents that aren't ours are left on Claude Code's default rendering.
+
+Per-row `model` and `contextWindowSize` need Claude Code **v2.1.205+**; on older
+versions the rows degrade to badge + label + elapsed. The same gates as the rest of
+the plugin apply: the workspace trust dialog must be accepted, and `disableAllHooks`
+disables status lines too.
+
+### Post-install: aggregate count on the main status line
+
+A compact `swarm 2H 5S 1O` segment — running swarm agents by tier, same colors, red
+only for anomalies — can sit in your main status line. This one is a manual step for
+two documented reasons:
+
+- A plugin's `settings.json` cannot ship `statusLine` — "Only the `agent` and
+  `subagentStatusLine` keys are currently supported" (plugins reference).
+- The main status line's stdin carries **session data only, no task list** — the
+  `tasks` array goes exclusively to `subagentStatusLine`. So the subagent renderer
+  caches a ~100-byte per-session aggregate in the OS temp dir (the statusline docs'
+  own caching pattern, keyed by `session_id`), and this segment reads it with a
+  10-second staleness cutoff. Display-only; safe to delete at any time.
+
+Copy `scripts/swarm-statusline.js` to somewhere stable — a settings entry cannot use
+`${CLAUDE_PLUGIN_ROOT}`, and the plugin's install path changes on every update, so
+point at your own copy rather than into the plugin directory:
+
+```
+cp /path/to/claude-swarm/scripts/swarm-statusline.js ~/.claude/
+```
+
+(Any clone of this repo works as the source; so does the installed plugin directory —
+ask Claude for its path — as long as you *copy* out of it.)
+
+Then add to `~/.claude/settings.json` (or compose it into an existing status line
+script by appending its output — it prints one segment, no newline, and prints
+nothing while no swarm agents run):
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "node ~/.claude/swarm-statusline.js",
+    "refreshInterval": 1
+  }
+}
+```
+
+`refreshInterval: 1` matters: the event-driven status line triggers go quiet exactly
+when this display matters most — "The event-driven triggers can go quiet when the
+main session is idle, for example while a coordinator waits on background subagents"
+(statusline docs). The status line runs locally and consumes no API tokens.
+
 ## Cost model
 
 - **Master** = the main loop / a Workflow script on **Opus** — or **Fable** if you've
@@ -244,6 +323,8 @@ claude-swarm/
   skills/claude-swarm/   # the orchestration playbook
   workflows/             # survey.js, audit.js, build.js (auto-discovered)
   hooks/                 # SessionStart: inject the policy; SubagentStop: completion feed
+  settings.json          # ships the subagentStatusLine renderer by default
+  scripts/               # status line renderers: per-agent rows + main-line segment
   evals/                 # three-arm benchmark harness and recorded predictions
   test/smoke.js          # manifests, hooks, workflows, validator (npm test)
   .github/workflows/     # CI: runs the smoke test on push/PR
