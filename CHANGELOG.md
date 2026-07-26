@@ -7,6 +7,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html): the git tag
 
 ## [Unreleased]
 
+## [0.2.6] — 2026-07-26
+
 ### Fixed
 - **The 30-second grace window now actually fires.** 0.2.5 shipped it, and it worked in the
   session that built it, but it depended on something Claude Code does not reliably do. The
