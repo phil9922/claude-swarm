@@ -7,6 +7,60 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html): the git tag
 
 ## [Unreleased]
 
+## [0.2.9] — 2026-07-26
+
+### Changed
+- **`build` no longer throttles its own parallel phase.** `concurrency` defaulted to a fixed
+  **8**. The first measured run decomposed into **14** independent units on a machine whose
+  harness cap (`min(16, cores - 2)`) allowed 14, so the leaf wave queued into roughly two
+  slot-waves for no reason — and the leaf-completion pattern shows it: the first five landed
+  inside a 6-second span, then stragglers with gaps up to 104s.
+
+  It now defaults to the unit count, bounded at 12. Batching can only merge units into *fewer*
+  agents, so the unit count is a safe upper bound and this default never queues; the bound just
+  stops a very wide manifest dispatching unboundedly. An explicit `concurrency` still wins and
+  still throttles — that is its purpose, for trading wall time against cost.
+
+- **Foundation guidance: keep implementations out of it.** Everything the master writes before
+  dispatch is paid at full wall cost in a phase no fan-out can shorten, so the foundation's size
+  sets the ceiling on the whole run. It should carry contracts, not implementations — a module
+  with a clear contract and its own file is a *unit*, declared as something others `reads`, and
+  the dependency gating orders it for free.
+
+  Measured, not stylistic: run 1's foundation took **602s — 45% of the build and 60% of the
+  entire solo baseline** — writing 26 files, of which 14 were stubs and 12 shared. Those 12
+  included fully implemented cents math, balance folding, filtering, stats aggregation and
+  validation, all five of which had contracts and could have been units. The serial phase did
+  the algorithmic work while the parallel wave got presentational components, which is the shape
+  that made the run land slower than solo.
+
+- **Integration establishes file presence with one sweep** rather than reading every owned file.
+  It runs alone, so each read is serial wall time spent before any fixing starts; it now opens
+  only what the sweep flags as missing, small, or still carrying the placeholder.
+
+### Fixed
+- **The documented type-check command was a no-op on the commonest scaffold.** Both occurrences
+  in `SKILL.md` showed `npx tsc --noEmit`. In a Vite project the root `tsconfig.json` is a
+  solution file with `"files": []`, so that command **exits 0 on any source, including source
+  with type errors** — proven by planting one. Since `typecheck` is the grader handed to every
+  leaf, a vacuous one does not merely cost correctness: it relocates the errors into the serial
+  integration pass, which is the phase fan-out cannot speed up. Replaced, with an instruction to
+  prove the grader fails on a real error before dispatching.
+
+### Tests
+- **Smoke checks 71 → 72.** The concurrency check is **behavioural** — it counts leaves actually
+  in flight rather than reading the logged number — and is mutation-tested three ways: reverting
+  the default to 8, dropping the bound, and ignoring the explicit override each fail their own
+  distinct assertion.
+
+### Docs
+- `evals/shakedown-results.md` records where the serial time went, and an adjustment for unequal
+  work: ~215s of the build arm's time was post-workflow verification the solo arm never did,
+  which moves the ratio from 0.71x to ~0.83x. The falsification stands either way; the headline
+  figures are left as measured and the adjustment is labelled as one.
+- `evals/shakedown-2.md` adds a second spec sized so the wall question is answerable at all
+  (~12–18% serial against run 1's 69.7%), with its prediction pre-registered.
+
 ## [0.2.8] — 2026-07-26
 
 ### Fixed
